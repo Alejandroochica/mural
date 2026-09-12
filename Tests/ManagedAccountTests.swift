@@ -25,6 +25,28 @@ final class ManagedAccountTests: XCTestCase {
         XCTAssertThrowsError(try config().endpoint("https://attacker.example.test/v1/wallet"))
         XCTAssertThrowsError(try config().endpoint("//attacker.example.test"))
     }
+    func testGoogleCanBeConfiguredWithoutAppleCapability() throws {
+        let google = try ManagedAccountConfiguration(apiURL: "https://accounts.example.test", googleClientID: client,
+            bundleID: "chat.mural.test", registeredURLSchemes: [scheme], appleCapabilityEnabled: false)
+        XCTAssertEqual(google.providers, [.google])
+        XCTAssertNil(google.appleClientID)
+        XCTAssertEqual(google.googleRedirectURI?.absoluteString, scheme + ":/oauth2redirect")
+        // Adding a provider preserves the account's server and app binding.
+        XCTAssertEqual(google.storageScope, try config().storageScope)
+        XCTAssertThrowsError(try ManagedAccountConfiguration(apiURL: "https://accounts.example.test", googleClientID: client,
+            bundleID: "chat.mural.test", registeredURLSchemes: [], appleCapabilityEnabled: false))
+    }
+    func testAppleOnlyRequiresCapabilityAndCannotStartGoogleAuthorization() throws {
+        let apple = try ManagedAccountConfiguration(apiURL: "https://accounts.example.test", appleClientID: "chat.mural.test",
+            bundleID: "chat.mural.test", registeredURLSchemes: [], appleCapabilityEnabled: true)
+        XCTAssertEqual(apple.providers, [.apple])
+        XCTAssertNil(apple.googleRedirectURI)
+        XCTAssertThrowsError(try ManagedGoogleAuthorization(configuration: apple, verifier: String(repeating: "v", count: 43), state: state, nonce: nonce))
+        XCTAssertThrowsError(try ManagedAccountConfiguration(apiURL: "https://accounts.example.test", appleClientID: "chat.mural.test",
+            bundleID: "chat.mural.test", registeredURLSchemes: [], appleCapabilityEnabled: false))
+        XCTAssertThrowsError(try ManagedAccountConfiguration(apiURL: "https://accounts.example.test",
+            bundleID: "chat.mural.test", registeredURLSchemes: [], appleCapabilityEnabled: true))
+    }
     func testPKCES256MatchesRFC7636VectorAndBindsRawNonce() throws {
         XCTAssertEqual(ManagedGoogleAuthorization.codeChallenge(verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
                        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
@@ -63,6 +85,25 @@ final class ManagedAccountTests: XCTestCase {
         XCTAssertFalse(session.isUsable(scope: try config().storageScope, now: now.addingTimeInterval(-1)))
         let malformed = Data("{\"accountID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"accessToken\":\"bad\\nheader\",\"expiresInSeconds\":86400}".utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ManagedAuthExchange.self, from: malformed).validate())
+    }
+    func testAccountProfileBindsIdentityAndAcceptsPrivateEmail() throws {
+        let id = UUID()
+        let exchange = try JSONDecoder().decode(ManagedAuthExchange.self, from: JSONSerialization.data(withJSONObject: [
+            "accountID": id.uuidString, "accessToken": String(repeating: "x", count: 43), "expiresInSeconds": 86400
+        ]))
+        let session = try ManagedAccountSession(exchange: exchange, provider: .google, scope: config().storageScope)
+        func profile(id: UUID, email: Any = NSNull(), providers: [String] = ["google"], date: String = "2026-09-12T12:34:56.123Z") throws -> ManagedAccountProfile {
+            try JSONDecoder().decode(ManagedAccountProfile.self, from: JSONSerialization.data(withJSONObject: [
+                "accountID": id.uuidString, "email": email, "providers": providers, "createdAt": date
+            ]))
+        }
+        try profile(id: id).validate(session: session)
+        try profile(id: id, email: "learner@privaterelay.appleid.com", providers: ["google", "apple"], date: "2026-09-12T12:34:56Z").validate(session: session)
+        XCTAssertThrowsError(try profile(id: UUID()).validate(session: session))
+        XCTAssertThrowsError(try profile(id: id, providers: ["apple"]).validate(session: session))
+        XCTAssertThrowsError(try profile(id: id, providers: ["google", "google"]).validate(session: session))
+        XCTAssertThrowsError(try profile(id: id, email: "learner@example.test\nOther identity").validate(session: session))
+        XCTAssertThrowsError(try profile(id: id, date: "not a timestamp").validate(session: session))
     }
     func testWalletPreservesLargeIntegerAmountsAndRejectsInconsistentMath() throws {
         func wallet(_ balance: String, _ reserved: String, _ available: String) throws -> ManagedWallet {

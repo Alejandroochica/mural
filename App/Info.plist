@@ -15,4 +15,15 @@
 <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
 <key>ITSAppUsesNonExemptEncryption</key><false/>
+<key>MuralManagedAccountsEnabled</key><string>$(MURAL_MANAGED_ACCOUNTS_ENABLED)</string>
+<key>MuralManagedAPIURL</key><string>$(MURAL_MANAGED_API_URL)</string>
+<key>MuralGoogleSignInEnabled</key><string>$(MURAL_GOOGLE_SIGN_IN_ENABLED)</string>
+<key>MuralGoogleClientID</key><string>$(MURAL_GOOGLE_CLIENT_ID)</string>
+<key>MuralAppleSignInEnabled</key><string>$(MURAL_APPLE_SIGN_IN_ENABLED)</string>
+<key>MuralAppleClientID</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleTypeRole</key><string>Editor</string>
+<key>CFBundleURLName</key><string>Google sign-in</string>
+<key>CFBundleURLSchemes</key><array><string>$(MURAL_GOOGLE_CALLBACK_SCHEME)</string></array>
+</dict></array>
 </dict></plist>

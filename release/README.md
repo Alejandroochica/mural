@@ -1,33 +1,36 @@
 # Release status
 
-**The source is public. Apple distribution and the managed service are pending.** This checklist separates the current BYOK app from future accounts, free minutes and credit purchases. No TestFlight invitation or App Store submission has been completed.
+**The source and website are public, and optional Google accounts are deployed for supported preview builds.** The real Google sign-in test on the user's phone is pending. Apple sign-in, TestFlight, the App Store, hosted free minutes and credit purchases remain unavailable. Account creation does not enable hosted conversations or payments; practice with a personal OpenAI key remains independent of signup.
 
 ## Completed
 
-- [x] Publish [the iPhone app repository](https://github.com/Chuloo/mural) under MIT. Verified commit `f2f1a78` passed the Swift core and server CI jobs; native iOS build and UI checks are recorded separately below.
-- [x] Publish [the separate website repository](https://github.com/Chuloo/mural-website), including the request-access update `f9b1de1`, and make [mural.chat](https://mural.chat/) available over HTTPS.
+- [x] Publish [the iPhone app repository](https://github.com/Chuloo/mural) under MIT. Earlier CI at `f2f1a78` passed the Swift core and server jobs; the later backend and native checks are recorded separately below.
+- [x] Publish [the separate website repository](https://github.com/Chuloo/mural-website), including update `ab20d41`, and make [mural.chat](https://mural.chat/) available over HTTPS.
+- [x] Verify the live **138,707-byte, 1733 × 908** JPEG social image, updated OG/X metadata, favicon ICO and Apple touch PNG. The matching Mural icon was uploaded to the live Stripe account and its branding setting persisted. This verifies branding, not payment activation.
 - [x] Enable the website's email access list with private database storage, consent, duplicate handling, admission limits and retention. A live browser submission and repeat request produced one database row; the synthetic test address was removed afterward. No invitations are sent automatically.
 - [x] Verify the privacy, terms and support pages on the custom domain return HTTP 200 without login. Confirm the operator as **Hackmamba Inc., incorporated in the United States**, with support at hi@hackmamba.io.
 - [x] Implement Norwegian, Spanish, English and French modules, language/subtitle onboarding, versioned AI consent, local backups and the existing conversation controls.
-- [x] Pass 53 core tests and five focused UI checks for the final native update, including new-user onboarding, consent and conversation controls. The earlier 11-test language/onboarding suite is historical coverage. The updated personal build was installed and launched on the iPhone. See [the verification record](../verification/validation.md) for the tested builds and limits.
+- [x] Pass **56 Swift core tests, three baseline UI checks and two configured-account UI checks**. The signed personal build was installed and launched on the iPhone at **16:48:47 CEST on September 12**, preserving existing data. These checks do not establish a successful real Google login or a final App Store candidate. The earlier 11-test language/onboarding suite is historical coverage. See [the verification record](../verification/validation.md) for tested builds and limits.
+- [x] Deploy backend `e7106ab` on Hetzner after **72 passing tests with PostgreSQL**. Provider discovery reports Google enabled and Apple disabled. Live checks returned `401` for an anonymous account request, `400` for a malformed identity exchange and `200` for a fresh sign-in challenge. Wallet, trial, Checkout and hosted-voice routes remain gated with `503` responses.
 - [x] Prepare four **1320 × 2868** [App Store screenshots](screenshots/en-US/README.md), app icons, first-party and WebRTC privacy manifests, and third-party notices.
 - [x] Prepare [listing and review-note drafts](app-store-metadata.md) and a [BYOK privacy inventory](app-privacy.md). These have not been entered or approved in App Store Connect.
-- [x] Compile an unsigned **0.1.0 (1)** iOS Release archive with both privacy manifests and debug symbols. This is a local compilation check; Apple distribution signing, upload validation and review remain pending.
+- [x] Compile an unsigned **0.1.0 (1)** iOS Release archive with both privacy manifests and debug symbols at the earlier Settings-link checkpoint. This is historical local compilation evidence; it predates the account rollout and is not the final native candidate. Apple distribution signing, upload validation and review remain pending.
 
-The local archive is `.build/ReleasePrep/Mural-0.1.0-unsigned.xcarchive`, refreshed at 14:44 CEST on September 12 with the permanent Settings links. The simulator build and existing Settings navigation check passed before archiving. Publication scope and exclusions are recorded in [the source audit](source-audit.md).
+The local archive is `.build/ReleasePrep/Mural-0.1.0-unsigned.xcarchive`, refreshed at **14:44 CEST on September 12** with the permanent Settings links. Its simulator build and existing Settings navigation check passed before archiving. Create and verify a fresh archive from the final account-enabled or BYOK-only release candidate before any upload. Publication scope and exclusions are recorded in [the source audit](source-audit.md).
 
 ## Finish the BYOK release
 
 | Remaining item | What is needed |
 | --- | --- |
-| Apple membership and seller | Activate paid Apple Developer Program membership and confirm the enrolled App Store seller matches the intended entity. The operator is Hackmamba Inc., incorporated in the United States. William Imoh and hi@hackmamba.io are confirmed contacts; the private App Review telephone is still needed. |
+| Apple membership and seller | The Apple Developer portal shows **Hackmamba Inc. — Pending**. Complete paid enrollment and confirm the active App Store seller. The operator is incorporated in the United States. William Imoh and hi@hackmamba.io are confirmed contacts; the private App Review telephone is still needed. |
 | Apple app record and signing | Register the app identifier, create the App Store Connect record and SKU, accept agreements, and produce a distribution-signed archive. Preserve the personal installation’s signing identity until a migration is planned. |
 | Review access | Provision working review access so the reviewer can use speech without purchasing OpenAI access. Supply credentials privately; do not bundle or commit a shared key. |
 | Final device checks | Test the candidate on an iPhone: microphone denial, offline/failing API requests, interruptions, cellular use, reset, meanings, export/import and deletion. Review pronunciation and corrections for all four languages; earlier Spanish checks do not establish English or French quality. |
-| Store declarations | Finalize privacy, age rating, accessibility claims, export compliance, regions and pricing against the uploaded build. Resolve remaining fields in the listing draft. |
+| Optional-account checks | Complete the user's real Google login, profile display, session restoration, sign-out and account deletion on the phone. Verify local learning survives account actions. Keep Apple sign-in unavailable until enrollment, credentials, capability and revocation are configured and tested. These checks are required for a candidate that exposes accounts. |
+| Store declarations | Finalize privacy, age rating, accessibility claims, export compliance, regions and pricing against the uploaded build. Extend the existing BYOK App Privacy inventory to cover signup and security records if accounts are included. Resolve remaining fields in the listing draft. |
 | Distribution | Validate and upload through Xcode, verify an internal TestFlight installation, complete external beta review, then enable and check a public invitation. App Store review is a separate submission. |
 
-Language and subtitle selection, followed by AI consent, are active for new installations. Existing users retain their settings. Managed-account signup remains disabled. The app’s onboarding and AI-consent screens link to the privacy policy. Settings includes all three release pages; the disabled account view also links to privacy and terms.
+Language and subtitle selection, followed by AI consent, are active for new installations. Existing users retain their settings. Supported preview builds offer optional Google sign-in; Apple remains disabled. The app's onboarding and AI-consent screens link to the privacy policy. Settings includes all three release pages, and the account screen presents linked terms and privacy acknowledgement before its available sign-in buttons. The website access list is separate from an app account and is not a technical invitation-only gate for Google signup.
 
 | Page | Canonical URL | Availability |
 | --- | --- | --- |
@@ -37,18 +40,19 @@ Language and subtitle selection, followed by AI consent, are active for new inst
 
 Use [the Apple release checklist](apple-release.md) for the upload sequence and official requirements. Keep final candidate verification distinct from the historical results above.
 
-## Finish before enabling the managed service
+## Finish hosted trials and payments
 
-These items do not block a correctly disclosed BYOK build. They do block promising free minutes, accounts or purchased credits to users.
+A correctly disclosed BYOK release can proceed independently of these items. Optional-account checks are listed above; free minutes, hosted conversations and purchased credits require the work below.
 
-- [x] Deploy the gated API foundation, PostgreSQL and HTTPS proxy with separate migration and restricted runtime database roles. Public health, readiness and pricing checks pass. Commercial routes return `503 commercial_features_not_ready`; provider credentials have not been deployed, and account creation, trial, checkout and hosted voice remain unavailable.
-- [x] Verify a real Stripe sandbox purchase and full refund with signed webhooks. Credit was added and reversed once despite repeated events. Fixed-USD Checkout was verified against Stripe; 57 backend tests passed with PostgreSQL and no skips. These checks used no real money and do not validate a native purchase flow or enable live payments.
+- [x] Deploy the API foundation, PostgreSQL and HTTPS proxy with separate migration and restricted runtime database roles. Public health, readiness and pricing checks pass. Google account routes are available as described above; commercial routes remain gated with `503 commercial_features_not_ready`.
+- [x] Verify a Stripe sandbox purchase and full refund with signed webhooks. Credit was added and reversed once despite repeated events. Fixed-USD Checkout was verified against Stripe; that earlier billing checkpoint passed 57 tests with PostgreSQL and no skips. These checks used no real money and do not validate a native purchase flow or enable live payments.
 - [x] Configure daily encrypted local database backups and verify one backup by restoring it into a separate temporary database. The first encrypted copy was also retained off the server.
 - [ ] Configure recurring encrypted off-server backup storage, verify scheduled recovery and add operational alerts without conversation content. A daily local backup and one off-server copy do not complete this work.
-- [ ] Configure Google’s native OAuth client and Apple’s identity credentials/capability. Verify sign-in, secure session restore, expiry, sign-out and Apple authorization revocation on a real device. Complete deletion with unresolved balances/payments and recovery after device loss.
+- [x] Configure Google's native OAuth audience and deploy optional account routes with bounded sessions, authentication admission limits, retention and signup-only account deletion. The website privacy and terms describe this account-only preview.
+- [ ] Complete real Google device verification and, after Apple enrollment, configure and verify Apple sign-in and authorization revocation. Test recovery after device loss and the user-facing resolution path for future accounts with balances or payments; current empty-account deletion does not complete that workflow.
 - [ ] Verify the hosted voice adapter against a bounded real provider call, including cutoff, hangup, final usage, network failure and reconciliation. Implement budgets for hosted teaching, subtitles and search.
 - [ ] Implement App Attest/DeviceCheck verification, durable trial claims, the ten-minute allowance and a global free-use budget. The current trial attestor rejects requests.
 - [ ] Complete StoreKit verification and storefront routing for in-app sales, plus live payment activation, refunds, dispute resolution, taxes and transparent receipts. Stripe sandbox tests alone do not enable App Store purchases.
-- [ ] Update privacy, terms, App Privacy answers and review access for the actual account, billing and usage records before activation.
+- [ ] Update privacy, terms, App Privacy answers and review access for actual billing and usage records before commercial activation. Account-only website disclosures do not cover future payment or hosted-conversation processing.
 
-The native account client and server foundation are implemented but disabled. Their offline tests used synthetic identities and provider responses. See [native setup](../docs/managed-accounts.md) and [the server runbook](../server/README.md) for exact configuration and implementation gaps.
+The native account client and Google-enabled server are deployed for the preview. Automated account tests use synthetic identities and provider responses; the real Google OAuth result is still pending. Apple and commercial features remain off. See [native setup](../docs/managed-accounts.md), [account deployment](../server/docs/enable-accounts.md), [stored account records](../server/docs/accounts-reference.md) and [the server runbook](../server/README.md) for configuration and remaining work.

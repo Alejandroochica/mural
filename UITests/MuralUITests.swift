@@ -29,6 +29,16 @@ final class MuralUITests: XCTestCase {
     func testSettingsOfferSecureKeyEntryAndBackups() {
         let app = launch()
         app.buttons["Settings"].tap()
+        if app.buttons["managed-account-settings"].exists {
+            app.buttons["managed-account-settings"].tap()
+            XCTAssertTrue(app.staticTexts["managed-sign-in-agreement"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["managed-google-sign-in"].isHittable || app.buttons["managed-apple-sign-in"].isHittable)
+            XCTAssertFalse(app.staticTexts["managedAccountMessage"].exists)
+            XCTAssertFalse(app.buttons["Buy credits"].exists)
+            let accountScreen = XCTAttachment(screenshot: app.screenshot())
+            accountScreen.name = "Configured account signup"; accountScreen.lifetime = .keepAlways; add(accountScreen)
+            app.navigationBars["Account"].buttons.element(boundBy: 0).tap()
+        }
         XCTAssertFalse(app.secureTextFields["api-key"].exists)
         app.buttons["advanced-api-key"].tap()
         if !app.secureTextFields["api-key"].exists { app.swipeUp() }
@@ -36,6 +46,20 @@ final class MuralUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Done"].exists)
         app.buttons["Done"].tap()
         XCTAssertTrue(app.buttons["start-conversation"].exists)
+    }
+
+    func testSettingsKeepLicensesInNoticesWithoutTransportDetails() {
+        let app = launch()
+        app.buttons["Settings"].tap()
+        for _ in 0..<6 {
+            if app.buttons["Open-source notices"].isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.buttons["Open-source notices"].isHittable)
+        XCTAssertFalse(app.staticTexts["WebRTC distribution by stasel, BSD 3-Clause. WebRTC includes third-party open-source components."].exists)
+        XCTAssertFalse(app.links["WebRTC licenses"].exists)
+        app.buttons["Open-source notices"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Google WebRTC")).firstMatch.waitForExistence(timeout: 5))
     }
 
     func testExistingUserCanDeclineThenAcceptAIConsentWithoutRepeatingOnboarding() {

@@ -55,6 +55,8 @@ sourcePhase = add('sources','PBXSourcesBuildPhase',buildActionMask=2147483647,fi
 resources = add('resources','PBXResourcesBuildPhase',buildActionMask=2147483647,files=[add('assetsBuild','PBXBuildFile',fileRef=asset),add('noticesBuild','PBXBuildFile',fileRef=notices),add('privacyBuild','PBXBuildFile',fileRef=privacy)],runOnlyForDeploymentPostprocessing=0)
 common = {'SDKROOT':'iphoneos','IPHONEOS_DEPLOYMENT_TARGET':'26.1','SWIFT_VERSION':'5.0','CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','SWIFT_STRICT_CONCURRENCY':'targeted'}
 targetSettings = {'PRODUCT_BUNDLE_IDENTIFIER':'no.william.mural','PRODUCT_NAME':'$(TARGET_NAME)','TARGETED_DEVICE_FAMILY':'1','GENERATE_INFOPLIST_FILE':'NO','INFOPLIST_FILE':'App/Info.plist','CODE_SIGN_STYLE':'Automatic','MARKETING_VERSION':'0.1.0','CURRENT_PROJECT_VERSION':'1','ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon','ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME':'AccentColor','LD_RUNPATH_SEARCH_PATHS':['$(inherited)','@executable_path/Frameworks'],'ENABLE_PREVIEWS':'YES','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator'}
+targetSettings.update({'CODE_SIGN_ENTITLEMENTS':'$(MURAL_APPLE_ENTITLEMENTS)',
+                      'SWIFT_ACTIVE_COMPILATION_CONDITIONS':'$(inherited) $(MURAL_APPLE_SWIFT_FLAGS)'})
 def configs(prefix, settings):
     ids=[]
     for name in ['Debug','Release']:

@@ -311,7 +311,7 @@ struct SettingsView: View {
                     Section {
                         NavigationLink { ManagedAccountView() } label: {
                             Label("Account", systemImage: "person.crop.circle")
-                        }.disabled(coordinator.isRunning)
+                        }.disabled(coordinator.isRunning).accessibilityIdentifier("managed-account-settings")
                     }
                 }
                 Section {
@@ -365,9 +365,7 @@ struct SettingsView: View {
                     Text("Voice: GPT-Live-1 · Teacher: GPT-5.6 Luna").font(.footnote)
                     Link("OpenAI data controls", destination: URL(string: "https://developers.openai.com/api/docs/guides/your-data")!)
                     Text("Audio and selected text go to OpenAI while you practise. Requests disable provider storage where supported; abuse-monitoring retention may still apply. Raw audio is not saved by Mural.").font(.footnote)
-                    Text("WebRTC distribution by stasel, BSD 3-Clause. WebRTC includes third-party open-source components.").font(.footnote)
                     Button("Open-source notices") { notices = true }
-                    Link("WebRTC licenses", destination: URL(string: "https://webrtc.org/support/license")!)
                 }
             }.scrollContentBackground(.hidden).background(MuralColor.cream).tint(MuralColor.secondary)
                 .navigationTitle("Make yourself comfortable").navigationBarTitleDisplayMode(.inline)

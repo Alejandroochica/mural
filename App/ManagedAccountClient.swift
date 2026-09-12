@@ -11,11 +11,17 @@ extension ManagedAccountConfiguration {
         #else
         let appleCapabilityEnabled = false
         #endif
-        guard bundle.object(forInfoDictionaryKey: "MuralManagedAccountsEnabled") as? Bool == true,
+        func enabled(_ key: String) -> Bool {
+            let value = bundle.object(forInfoDictionaryKey: key)
+            return value as? Bool == true || (value as? String)?.uppercased() == "YES"
+        }
+        guard enabled("MuralManagedAccountsEnabled"),
               let api = bundle.object(forInfoDictionaryKey: "MuralManagedAPIURL") as? String,
-              let google = bundle.object(forInfoDictionaryKey: "MuralGoogleClientID") as? String,
-              let apple = bundle.object(forInfoDictionaryKey: "MuralAppleClientID") as? String,
               let bundleID = bundle.bundleIdentifier else { return nil }
+        let google = enabled("MuralGoogleSignInEnabled")
+            ? bundle.object(forInfoDictionaryKey: "MuralGoogleClientID") as? String : nil
+        let apple = enabled("MuralAppleSignInEnabled") && appleCapabilityEnabled
+            ? bundle.object(forInfoDictionaryKey: "MuralAppleClientID") as? String : nil
         let schemes = (bundle.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? [])
             .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
         return try? Self(apiURL: api, googleClientID: google, appleClientID: apple,
@@ -81,6 +87,10 @@ struct ManagedAccountClient {
         let result: ManagedWallet = try await request("/v1/wallet", method: "GET", session: session)
         try result.validate(); return result
     }
+    func profile(session: ManagedAccountSession) async throws -> ManagedAccountProfile {
+        let result: ManagedAccountProfile = try await request("/v1/account", method: "GET", session: session)
+        try result.validate(session: session); return result
+    }
     func signOut(session: ManagedAccountSession) async throws {
         struct Response: Decodable { let signedOut: Bool }
         let result: Response = try await request("/v1/auth/sign-out", method: "POST", body: [:], session: session)
@@ -109,7 +119,7 @@ struct ManagedAccountClient {
             if response.statusCode == 401 { throw ManagedAccountError.server("sign_in_required") }
             let code = (try? JSONDecoder().decode(Failure.self, from: data))?.error.code ?? "service_unavailable"
             // Only a small allowlist is displayed. Never surface raw provider/server response text.
-            let safe = ["unresolved_billing", "rate_limit", "apple_sign_in_not_ready", "apple_revocation_not_configured", "invalid_challenge"]
+            let safe = ["unresolved_billing", "rate_limit", "apple_sign_in_not_ready", "apple_revocation_not_configured", "invalid_challenge", "identity_provider_not_configured"]
             throw ManagedAccountError.server(safe.contains(code) ? code : "service_unavailable")
         }
         do { return try JSONDecoder().decode(T.self, from: data) }

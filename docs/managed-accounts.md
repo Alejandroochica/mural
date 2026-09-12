@@ -1,56 +1,77 @@
-# Configure the native account foundation
+# How to enable optional sign-in on iPhone
 
-The account client is implemented but disabled. The shipped app still uses the owner's OpenAI API key. Account creation does not enable hosted conversations, trial minutes or purchases.
+Configure Google or Apple sign-in without enabling hosted conversations, trial minutes or purchases. Users can still practise with their own OpenAI API key without an account. The source defaults to accounts disabled; the current local Mural build enables Google only.
 
-`ManagedAccountView` is a reusable Settings destination. `ManagedAccountStore` manages its state, `ManagedAccountIdentity` presents the native provider flows, and `ManagedAccountClient` implements the server contracts. None of these files reads or writes the OpenAI key.
+## Enable Google
 
-## Enable a configured development build
+1. Deploy the account service using the [server setup guide](../server/docs/enable-accounts.md). Use an HTTPS origin with no path, query, fragment or embedded credentials. Confirm the server's `/v1/auth/providers` response enables Google before distributing a configured app.
+2. Create a Google OAuth client of type **iOS** for the app's bundle ID. Set the server's `GOOGLE_CLIENT_ID` to the same value. This flow uses the native client's audience and requires no Google client secret. Configure the OAuth consent screen for your intended users.
+3. Add these public values to the ignored `Config/Local.xcconfig`, preserving its existing signing settings:
 
-Do these steps only after the server and both identity providers are configured. Keep the current Personal Team build unchanged.
+```xcconfig
+MURAL_MANAGED_ACCOUNTS_ENABLED = YES
+MURAL_MANAGED_API_URL = https:/$()/api.mural.chat
+MURAL_GOOGLE_SIGN_IN_ENABLED = YES
+MURAL_GOOGLE_CLIENT_ID = 1034240936303-gernpir75rp4uvc8m5imrhrs18npma5n.apps.googleusercontent.com
+MURAL_GOOGLE_CALLBACK_SCHEME = com.googleusercontent.apps.1034240936303-gernpir75rp4uvc8m5imrhrs18npma5n
+MURAL_APPLE_SIGN_IN_ENABLED = NO
+MURAL_APPLE_SWIFT_FLAGS =
+MURAL_APPLE_ENTITLEMENTS =
+```
 
-1. Run the server behind a valid HTTPS origin. Its public API paths must start at `/v1`; the app rejects HTTP, URLs containing credentials, and base URLs with a path, query or fragment.
-2. Create a Google OAuth client of type **iOS**, using Mural's bundle ID. Set the server's `GOOGLE_CLIENT_ID` to this same client ID. This flow obtains an ID token for the native client, not a separate web client.
-3. Register the reversed Google client ID in `CFBundleURLTypes`. The callback is `<reversed-client-id>:/oauth2redirect`, with one slash. Enable the provider's consent screen for the intended testers.
-4. Using a paid Apple Developer team, enable **Sign in with Apple** for the app identifier and target. Add the `com.apple.developer.applesignin` entitlement containing `Default`, and regenerate the provisioning profile. Set server `APPLE_CLIENT_ID` to the app's bundle ID. Configure Apple's server credentials and test authorization revocation before accepting Apple signups.
-5. Add `MURAL_SIGN_IN_WITH_APPLE` to Swift compilation conditions only in the build configuration with that entitlement and matching provisioning profile. This is a build integration assertion; the client does not inspect private signing APIs at runtime. The default source build does not define it.
-6. Supply these public Info.plist values in that configuration:
+These values identify Mural's public iOS client in Google Cloud project `mural-508413`, for bundle `no.william.mural`. For another backend or bundle ID, substitute its origin and matching OAuth client. Keep the `https:/$()/` syntax in an xcconfig file so `//` is not treated as a comment.
 
-| Key | Value |
-| --- | --- |
-| `MuralManagedAccountsEnabled` | Boolean `true` |
-| `MuralManagedAPIURL` | The deployed HTTPS origin |
-| `MuralGoogleClientID` | The iOS OAuth client ID |
-| `MuralAppleClientID` | The app's bundle ID |
+4. Build and run the app using the [iPhone setup guide](run-on-iphone.md). Preserve the installed app's bundle ID and development team when updating it. `Config/Signing.xcconfig` loads the checked-in defaults from `Config/ManagedAccounts.xcconfig`, then applies the local overrides.
+5. Open **Settings → Account**. Confirm Google appears, Apple is absent, and the terms agreement and privacy acknowledgment are visible above the button. The registered callback is the reversed client ID followed by `:/oauth2redirect`, with one slash.
+6. Complete Google sign-in on the phone. Confirm the signed-in provider and verified email, when supplied, match the intended account. The app fetches `GET /v1/account` and validates its account ID against the active Mural session. It does not fetch or display a wallet in this release.
 
-7. Build with the configured target and verify the existing Account destination in Settings. It appears when `ManagedAccountConfiguration.load()` succeeds. BYOK conversations remain available without an account.
+Client IDs are public configuration. Keep OAuth secrets, Apple signing keys, OpenAI service keys and database credentials on the server. Do not add them to Info.plist, app resources or `Config/ManagedAccounts.xcconfig`.
 
-Client IDs are public configuration. Google or Apple client secrets, signing keys, OpenAI service keys and database credentials belong only on the server. Do not place them in Info.plist or an app resource.
+## Enable Apple when enrollment is approved
 
-## Authentication and storage
+Hackmamba Inc.'s Apple Developer enrollment was still processing on 12 September 2026. Keep Apple disabled until the developer account, provisioning and server revocation setup are ready. Google configuration does not require Apple capability.
 
-Google uses `ASWebAuthenticationSession` with an authorization code, PKCE S256, independent cryptographic state and the server's challenge nonce. Apple uses `ASAuthorizationController` with state and the same raw challenge nonce. The server hashes the nonce from the signed ID token once and compares it to its stored challenge hash. Do not hash the Apple nonce again in the client.
+1. Enable **Sign in with Apple** for the app identifier on the enrolled Apple Developer team. Regenerate a matching provisioning profile. Coordinate any signing-team change before updating the existing personal installation.
+2. Configure the server's `APPLE_CLIENT_ID` with the app's bundle ID, plus its team ID, key ID and private key file. Follow the [server instructions](../server/docs/enable-accounts.md) and complete authorization revocation checks before offering Apple signup.
+3. Set these local build values:
 
-The Google callback must match the registered scheme and exact path. Duplicate security parameters, unexpected authority or fragments, and a mismatched state are rejected. Neither provider's decoded JWT claims grant client access; the server verifies the signature, issuer, audience and nonce before returning a Mural session.
+```xcconfig
+MURAL_APPLE_SIGN_IN_ENABLED = YES
+MURAL_APPLE_SWIFT_FLAGS = MURAL_SIGN_IN_WITH_APPLE
+MURAL_APPLE_ENTITLEMENTS = App/SignInWithApple.entitlements
+```
 
-Only Mural's 24-hour session and its account identifier, provider, expiry and configuration scope are saved in Keychain. The service is `chat.mural.managed-account`; it is separate from the OpenAI key service. Entries use `WhenUnlockedThisDeviceOnly`, do not synchronize through iCloud Keychain, and are scoped to the API origin and both client IDs. Provider tokens and authorization codes stay in memory for the exchange. Requests use ephemeral networking, reject redirects, and do not log bodies or credentials.
+The bundled entitlement requests `com.apple.developer.applesignin` with `Default`. The compilation condition asserts that the configured build has that entitlement and an eligible profile; the app does not inspect private signing APIs. The Apple client ID in Info.plist follows `PRODUCT_BUNDLE_IDENTIFIER`.
 
-Sign-out revokes Mural sessions on the server and removes the local session. If the server cannot be reached, the view reports local sign-out and the remaining 24-hour maximum server lifetime. Account deletion waits for server confirmation. Apple deletion requests a fresh authorization code so the server can verify the account's Apple identity and revoke authorization. A balance, pending payment or usage reservation produces `unresolved_billing`; the account remains intact until those records are resolved.
+4. Build, verify the signed entitlement and provisioning profile, then complete Apple sign-in and account deletion on a device. Confirm deletion revokes Apple authorization before enabling the button for other users.
 
-## Verify before enabling it
+To use Apple alone, set `MURAL_GOOGLE_SIGN_IN_ENABLED = NO`. Each provider is gated independently. Adding a provider preserves existing Mural sessions for the same backend origin and app bundle ID.
 
-Run `swift test --filter ManagedAccountTests` for configuration, PKCE, callback, session, wallet and cancellation checks. These tests use synthetic values and make no network calls. They do not replace these configured-device checks:
+## Verify before sharing the build
 
-- Complete and cancel each provider flow; reject a reused challenge and a callback from an earlier attempt.
-- Confirm both ID-token audiences match server configuration and test an expired Mural session.
-- Confirm a saved session cannot be sent to a different API origin or restored after local sign-out.
-- Delete a Google account and an Apple account. Verify Apple's authorization is revoked and neither account can reuse its old Mural session.
-- Exercise a pending payment, nonzero balance and offline deletion. The UI must not claim successful deletion.
-- Update the public privacy policy, App Privacy disclosures and review instructions before exposing account creation.
+Run the offline account checks:
 
-No real provider sign-in, live server account or purchase was used to verify this foundation. Server availability and provider setup remain release prerequisites.
+```sh
+swift test --filter ManagedAccountTests
+```
 
-## Provider references and artwork
+These cover provider configuration, PKCE S256, callback validation, session expiry and scoping, profile identity binding, exact wallet arithmetic and cancellation. Wallet arithmetic remains tested foundation code; it does not enable a purchase flow. The tests use synthetic values and make no network calls.
 
-The Google implementation follows [OAuth for installed iOS apps](https://developers.google.com/identity/protocols/oauth2/native-app) and [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect). Apple flows use [ASWebAuthenticationSession](https://developer.apple.com/documentation/authenticationservices/aswebauthenticationsession), [Sign in with Apple](https://developer.apple.com/documentation/authenticationservices/implementing-user-authentication-with-sign-in-with-apple), and its documented [nonce](https://developer.apple.com/documentation/authenticationservices/asauthorizationopenidrequest/nonce) and [state](https://developer.apple.com/documentation/authenticationservices/asauthorizationopenidrequest/state) properties.
+Then verify the configured device:
 
-The Google button is the unmodified light iOS pill PNG at 3× resolution from Google's [approved sign-in artwork](https://developers.google.com/static/identity/images/signin-assets.zip), downloaded September 12, 2026. Display it without tinting or changing its aspect ratio, following [Google's branding guidelines](https://developers.google.com/identity/branding-guidelines). Google retains its trademarks and artwork rights; the repository's MIT license does not grant rights to those marks.
+- Complete and cancel Google sign-in. The system authentication session is ephemeral, so it may request a login even when Safari is already signed in.
+- Close Account during sign-in and confirm no late completion restores a cancelled session. Reject reused challenges and callbacks from an earlier attempt.
+- Relaunch and confirm the Mural session persists in its separate Keychain record. Only the Mural session, account ID, provider, expiry and backend/app scope are saved there. It uses `WhenUnlockedThisDeviceOnly`, does not sync through iCloud Keychain, and does not access the OpenAI key.
+- Sign out and verify the old server session is rejected. If offline, confirm the message distinguishes local sign-out from server revocation; Mural sessions expire within 24 hours.
+- Delete a disposable account and confirm server deletion before the app reports success. Saved learning history must remain on the phone. When Apple is enabled, also verify the fresh-code authorization revocation path.
+- Confirm account creation grants no credits or free trial and leaves BYOK conversations available without sign-in. Keep hosted voice, wallet and payment routes behind the server's commercial gate.
+
+Preview and UI-test launches using `--preview` do not load account credentials or perform sign-in requests. They can verify the account layout, but cannot establish that Google or Apple authorization works. Record real login, persistence, sign-out and deletion results separately in the [verification log](../verification/validation.md).
+
+## Related references
+
+The [account API reference](../server/docs/accounts-reference.md) defines challenge, exchange, profile, sign-out and deletion payloads, nonce handling, retention and errors. The native client uses OAuth authorization code with PKCE and state for Google, and `ASAuthorizationController` with state for Apple. Provider tokens and authorization codes stay in memory; the server verifies them before issuing a Mural session.
+
+Provider documentation: [Google installed-app OAuth](https://developers.google.com/identity/protocols/oauth2/native-app), [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Sign in with Apple](https://developer.apple.com/documentation/authenticationservices/implementing-user-authentication-with-sign-in-with-apple), and Apple's [nonce](https://developer.apple.com/documentation/authenticationservices/asauthorizationopenidrequest/nonce) and [state](https://developer.apple.com/documentation/authenticationservices/asauthorizationopenidrequest/state) properties.
+
+The Google button uses the unmodified light iOS pill PNG at 3× resolution from Google's [approved artwork](https://developers.google.com/static/identity/images/signin-assets.zip), downloaded 12 September 2026. Follow [Google's branding guidelines](https://developers.google.com/identity/branding-guidelines). Google retains its trademarks and artwork rights; Mural's MIT license does not grant rights to those marks. Bundled third-party notices remain available in **Settings → Open-source notices**.

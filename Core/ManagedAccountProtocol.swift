@@ -1,40 +1,57 @@
 import Foundation
 import CryptoKit
 
-public enum ManagedIdentityProvider: String, Codable, Sendable { case google, apple }
+public enum ManagedIdentityProvider: String, Codable, Hashable, Sendable { case google, apple }
 
 public enum ManagedAccountError: Error, Equatable, Sendable {
     case unavailable, invalidResponse, invalidCallback, cancelled, secureStorage, transport
     case server(String)
 }
 
-/// Public deployment configuration. A native build must explicitly enable its Apple capability.
+/// Providers are enabled separately so an unavailable provider cannot block a configured one.
 public struct ManagedAccountConfiguration: Equatable, Sendable {
     public let origin: URL
-    public let googleClientID: String
-    public let googleRedirectURI: URL
-    public let appleClientID: String
+    public let bundleID: String
+    public let googleClientID: String?
+    public let googleRedirectURI: URL?
+    public let appleClientID: String?
+    public var providers: Set<ManagedIdentityProvider> {
+        var result = Set<ManagedIdentityProvider>()
+        if googleClientID != nil { result.insert(.google) }
+        if appleClientID != nil { result.insert(.apple) }
+        return result
+    }
     public var storageScope: String {
-        [origin.absoluteString, googleClientID, appleClientID].joined(separator: "|")
+        // Adding another sign-in option does not sign out an existing account.
+        [origin.absoluteString, bundleID].joined(separator: "|")
     }
 
-    public init(apiURL: String, googleClientID: String, appleClientID: String,
+    public init(apiURL: String, googleClientID: String? = nil, appleClientID: String? = nil,
                 bundleID: String, registeredURLSchemes: [String], appleCapabilityEnabled: Bool) throws {
-        guard appleCapabilityEnabled, appleClientID == bundleID, !bundleID.isEmpty,
+        guard !bundleID.isEmpty,
               let url = URL(string: apiURL), let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme == "https", let host = components.host, !host.isEmpty,
               components.user == nil, components.password == nil, components.query == nil,
-              components.fragment == nil, components.path.isEmpty || components.path == "/",
-              googleClientID.range(of: "^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$", options: .regularExpression) != nil
+              components.fragment == nil, components.path.isEmpty || components.path == "/"
         else { throw ManagedAccountError.unavailable }
-        let scheme = googleClientID.split(separator: ".").reversed().joined(separator: ".")
-        guard registeredURLSchemes.contains(scheme), let redirect = URL(string: scheme + ":/oauth2redirect")
-        else { throw ManagedAccountError.unavailable }
+        var googleRedirect: URL?
+        if let googleClientID {
+            guard googleClientID.range(of: "^[A-Za-z0-9-]+\\.apps\\.googleusercontent\\.com$", options: .regularExpression) != nil
+            else { throw ManagedAccountError.unavailable }
+            let scheme = googleClientID.split(separator: ".").reversed().joined(separator: ".")
+            guard registeredURLSchemes.contains(scheme), let redirect = URL(string: scheme + ":/oauth2redirect")
+            else { throw ManagedAccountError.unavailable }
+            googleRedirect = redirect
+        }
+        if let appleClientID {
+            guard appleCapabilityEnabled, appleClientID == bundleID else { throw ManagedAccountError.unavailable }
+        }
+        guard googleClientID != nil || appleClientID != nil else { throw ManagedAccountError.unavailable }
         var normalized = components
         normalized.path = ""
         guard let origin = normalized.url else { throw ManagedAccountError.unavailable }
-        self.origin = origin; self.googleClientID = googleClientID
-        self.googleRedirectURI = redirect; self.appleClientID = appleClientID
+        self.origin = origin; self.bundleID = bundleID; self.googleClientID = googleClientID
+        self.googleRedirectURI = googleRedirect; self.appleClientID = appleClientID
     }
 
     public func endpoint(_ path: String) throws -> URL {
@@ -84,6 +101,30 @@ public struct ManagedAccountSession: Codable, Equatable, Sendable {
     }
 }
 
+public struct ManagedAccountProfile: Decodable, Equatable, Sendable {
+    public let accountID: UUID
+    public let email: String?
+    public let providers: [ManagedIdentityProvider]
+    public let createdAt: String
+
+    public func validate(session: ManagedAccountSession) throws {
+        guard accountID == session.accountID, providers.contains(session.provider),
+              providers.count <= 2, Set(providers).count == providers.count
+        else { throw ManagedAccountError.invalidResponse }
+        if let email {
+            guard !email.isEmpty, email.utf8.count <= 320, email.contains("@"),
+                  !email.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            else { throw ManagedAccountError.invalidResponse }
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fractionalDate = formatter.date(from: createdAt)
+        formatter.formatOptions = [.withInternetDateTime]
+        guard fractionalDate != nil || formatter.date(from: createdAt) != nil
+        else { throw ManagedAccountError.invalidResponse }
+    }
+}
+
 public struct ManagedWallet: Decodable, Equatable, Sendable {
     public let currency: String
     public let balanceNanoUSD: String
@@ -112,13 +153,18 @@ public struct ManagedGoogleAuthorization: Sendable {
     public let verifier: String
     public let state: String
     public let nonce: String
+    public let clientID: String
+    public let redirectURI: URL
 
     public init(configuration: ManagedAccountConfiguration, verifier: String, state: String, nonce: String) throws {
+        guard let clientID = configuration.googleClientID, let redirectURI = configuration.googleRedirectURI
+        else { throw ManagedAccountError.unavailable }
         guard verifier.range(of: "^[A-Za-z0-9._~-]{43,128}$", options: .regularExpression) != nil,
               state.range(of: "^[A-Za-z0-9_-]{43,128}$", options: .regularExpression) != nil,
               nonce.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
         else { throw ManagedAccountError.invalidResponse }
         self.configuration = configuration; self.verifier = verifier; self.state = state; self.nonce = nonce
+        self.clientID = clientID; self.redirectURI = redirectURI
     }
     public static func codeChallenge(verifier: String) -> String {
         Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
@@ -128,8 +174,8 @@ public struct ManagedGoogleAuthorization: Sendable {
     public var authorizationURL: URL {
         var c = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         c.queryItems = [
-            URLQueryItem(name: "client_id", value: configuration.googleClientID),
-            URLQueryItem(name: "redirect_uri", value: configuration.googleRedirectURI.absoluteString),
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "redirect_uri", value: redirectURI.absoluteString),
             URLQueryItem(name: "response_type", value: "code"), URLQueryItem(name: "scope", value: "openid email"),
             URLQueryItem(name: "state", value: state), URLQueryItem(name: "nonce", value: nonce),
             URLQueryItem(name: "code_challenge", value: Self.codeChallenge(verifier: verifier)),
@@ -139,8 +185,8 @@ public struct ManagedGoogleAuthorization: Sendable {
     }
     public func authorizationCode(from callback: URL) throws -> String {
         guard let c = URLComponents(url: callback, resolvingAgainstBaseURL: false),
-              c.scheme == configuration.googleRedirectURI.scheme, c.host == nil, c.user == nil,
-              c.password == nil, c.port == nil, c.path == configuration.googleRedirectURI.path,
+              c.scheme == redirectURI.scheme, c.host == nil, c.user == nil,
+              c.password == nil, c.port == nil, c.path == redirectURI.path,
               c.fragment == nil else { throw ManagedAccountError.invalidCallback }
         let items = c.queryItems ?? []
         func unique(_ name: String) throws -> String? {
@@ -157,7 +203,7 @@ public struct ManagedGoogleAuthorization: Sendable {
         return code
     }
     public func tokenBody(code: String) -> Data {
-        Self.form([("client_id", configuration.googleClientID), ("redirect_uri", configuration.googleRedirectURI.absoluteString),
+        Self.form([("client_id", clientID), ("redirect_uri", redirectURI.absoluteString),
                    ("code", code), ("code_verifier", verifier), ("grant_type", "authorization_code")])
     }
     public static func form(_ fields: [(String, String)]) -> Data {

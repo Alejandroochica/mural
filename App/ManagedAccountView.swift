@@ -11,7 +11,7 @@ struct ManagedAccountView: View {
             VStack(spacing: 24) {
                 MuralOrb(active: !store.isBusy).frame(width: 112, height: 112).padding(.top, 16)
                 VStack(spacing: 8) {
-                    Text(store.session == nil ? "A place for your account" : "Your Mural account")
+                    Text(store.session == nil ? "Welcome to Mural" : "Your Mural account")
                         .font(.system(.title, design: .rounded, weight: .semibold)).multilineTextAlignment(.center)
                     Text("Your conversations and learning history stay on this iPhone.")
                         .font(.subheadline).foregroundStyle(MuralColor.secondary).multilineTextAlignment(.center)
@@ -24,8 +24,9 @@ struct ManagedAccountView: View {
                 } else if let session = store.session {
                     VStack(spacing: 16) {
                         Label(session.provider == .apple ? "Signed in with Apple" : "Signed in with Google", systemImage: "person.crop.circle")
-                        if let amount = store.wallet?.availableDollars {
-                            LabeledContent("Available balance", value: amount.formatted(.currency(code: "USD")))
+                        if let email = store.profile?.email {
+                            Text(email).font(.body).textSelection(.enabled)
+                                .accessibilityIdentifier("managed-account-email")
                         }
                         Text("Purchases and hosted conversations aren’t available in this build.")
                             .font(.footnote).foregroundStyle(MuralColor.secondary)
@@ -36,12 +37,21 @@ struct ManagedAccountView: View {
                         .disabled(store.isBusy)
                 } else {
                     VStack(spacing: 14) {
-                        Text("Mural stores your sign-in details and the billing records needed to run your account. Your learning history isn’t uploaded.")
+                        Text("Mural stores your sign-in details and account sessions. You can practise with your own API key without an account.")
                             .font(.footnote).foregroundStyle(MuralColor.secondary).multilineTextAlignment(.center)
-                        Button { store.signIn(.google) } label: {
-                            Image("ManagedGoogleSignIn").resizable().scaledToFit().frame(height: 48)
-                        }.buttonStyle(.plain).accessibilityLabel("Sign in with Google")
-                        ManagedAppleSignInButton { store.signIn(.apple) }.frame(width: 206, height: 48)
+                        Text("By signing in, you agree to the [Terms of use](https://mural.chat/terms/) and acknowledge the [Privacy policy](https://mural.chat/privacy/).")
+                            .font(.footnote).multilineTextAlignment(.center).tint(MuralColor.ink)
+                            .accessibilityIdentifier("managed-sign-in-agreement")
+                        if store.configuration?.providers.contains(.google) == true {
+                            Button { store.signIn(.google) } label: {
+                                Image("ManagedGoogleSignIn").resizable().scaledToFit().frame(height: 48)
+                            }.buttonStyle(.plain).accessibilityLabel("Sign in with Google")
+                                .accessibilityIdentifier("managed-google-sign-in")
+                        }
+                        if store.configuration?.providers.contains(.apple) == true {
+                            ManagedAppleSignInButton { store.signIn(.apple) }.frame(width: 206, height: 48)
+                                .accessibilityIdentifier("managed-apple-sign-in")
+                        }
                     }.disabled(store.isBusy)
                 }
                 if store.isBusy { ProgressView().accessibilityLabel("Updating account") }
@@ -63,7 +73,7 @@ struct ManagedAccountView: View {
             Button("Delete account", role: .destructive, action: store.deleteAccount)
             Button("Keep account", role: .cancel) {}
         } message: {
-            Text("This removes your sign-in details. Required financial records may be retained. Learning history stays on this iPhone; you can remove it separately in Settings.")
+            Text("This removes your sign-in details and account sessions. Learning history stays on this iPhone; you can remove it separately in Settings.")
         }
     }
 }

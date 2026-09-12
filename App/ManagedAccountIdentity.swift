@@ -35,7 +35,7 @@ final class ManagedAccountIdentity: NSObject, ASWebAuthenticationPresentationCon
             webContinuation = continuation
             let id = UUID(); webID = id
             let session = ASWebAuthenticationSession(url: flow.authorizationURL,
-                callbackURLScheme: configuration.googleRedirectURI.scheme) { [weak self] url, error in
+                callbackURLScheme: flow.redirectURI.scheme) { [weak self] url, error in
                 Task { @MainActor in
                     guard let self, self.webID == id, let pending = self.webContinuation else { return }
                     self.webContinuation = nil; self.webSession = nil; self.webID = nil
