@@ -23,7 +23,7 @@ There is no Mural account database, ad SDK, analytics SDK, tracking identifier c
 
 ## Draft App Privacy answers
 
-Apple’s definition includes relevant third-party retention, not only Hackmamba’s servers. Free-form speech/text are covered by Audio Data and Other User Content; arbitrary personal details volunteered within that content do not require separately guessing every possible category. Data used only on-device is treated separately. [Apple App Privacy guidance](https://developer.apple.com/app-store/app-privacy-details/)
+Apple’s definition includes relevant third-party retention, not only the app operator’s servers. Free-form speech/text are covered by Audio Data and Other User Content; arbitrary personal details volunteered within that content do not require separately guessing every possible category. Data used only on-device is treated separately. [Apple App Privacy guidance](https://developer.apple.com/app-store/app-privacy-details/)
 
 | Category | Draft treatment | Basis and remaining check |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ Apple’s definition includes relevant third-party retention, not only Hackmamba
 | Search History | Collected; App Functionality; linked to user; no tracking | Current-topic searches are sent to the provider |
 | User ID / Other Usage Data | Verify provider handling before final answers | The API credential identifies a provider project; provider billing records exist, but Mural sends no separate Mural user ID |
 | Device identifiers, contacts, location, advertising, purchases | No collection by the current app | Recheck when adding authentication, payment or abuse-prevention services |
-| Customer Support | Reassess with the chosen support channel | No in-app support form currently sends content to Hackmamba |
+| Customer Support | Reassess with the chosen support channel | No in-app support form currently sends content to Mural’s operator |
 
 The first-party manifest conservatively declares audio, text and search as linked because requests use the learner’s provider account. It declares no tracking. Final App Store answers must include any additional provider or future backend processing confirmed during release review. Do not use a blanket “we don’t save anything” promise for the whole service.
 

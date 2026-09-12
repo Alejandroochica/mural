@@ -2,13 +2,52 @@
 
 **The language app you eventually delete.**
 
+<p align="center">
+  <img src="marketing/screenshots/iphone-17-spanish/01-hola.png" width="24%" alt="Mural greeting in Spanish with voice controls" />
+  <img src="marketing/screenshots/iphone-17-spanish/02-conversacion.png" width="24%" alt="Spanish café conversation with English meaning subtitles" />
+  <img src="marketing/screenshots/iphone-17-spanish/03-temas.png" width="24%" alt="Conversation themes for learning Spanish" />
+  <img src="marketing/screenshots/iphone-17-spanish/04-palabras.png" width="24%" alt="Spanish vocabulary with three levels of recall strength" />
+</p>
+
 Mural is a native iPhone app for learning through conversation. Speak to a warm, animated orb, follow the meaning when you need it, and practise words again in later conversations. Mural adjusts the challenge from the evidence in your replies.
 
-Built by Hackmamba with SwiftUI, Liquid Glass and local SwiftData storage. This version connects directly to OpenAI using your own API key. It needs an internet connection, but no Mural account or running Mac.
+Built with SwiftUI, Liquid Glass and local SwiftData storage. This version connects directly to OpenAI using your own API key. It needs an internet connection, but no Mural account or running Mac.
 
 ## Get started
 
 You need a Mac with Xcode 26 or later, an iPhone running iOS 26.1 or later, an Apple Account, and an OpenAI API project with billing and access to GPT-Live-1 and GPT-5.6 Luna. A ChatGPT subscription does not provide API credit.
+
+### Install with a local AI agent
+
+If Codex or another coding agent has access to your Mac's files and terminal, paste the prompt below. The agent can clone, build and install Mural. You handle Apple Account sign-in and team selection in Xcode, device trust and Developer Mode prompts, and API-key entry inside the app. The [iPhone installation guide](docs/run-on-iphone.md) covers each step.
+
+```text
+Help me build and install Mural on my iPhone from https://github.com/Chuloo/mural.
+
+Clone the repository into a new local folder, or use this checkout if it is
+already open. Read README.md, docs/run-on-iphone.md and docs/build-and-test.md.
+Check that Xcode and its iOS tools are ready, resolve the pinned dependencies,
+run the offline core tests, and build the iOS Simulator target.
+
+Guide me through adding my Apple Account and choosing my signing team in
+Xcode. For a first installation, help me choose a unique bundle identifier if
+needed. Preserve the existing team and identifier when updating Mural, and
+do not uninstall it or erase its learning data.
+
+Detect my connected iPhone, build with the configured signing team, install
+Mural and launch it. Tell me when I need to unlock the phone, trust this Mac
+or the developer profile, enable Developer Mode, or approve a system prompt.
+
+I will choose my learning and subtitle languages, then enter my own OpenAI
+API key in Settings > Advanced > Use your own API key. Do not ask me to paste
+the key into chat, read it from Keychain, or put it in source files or logs.
+Leave managed accounts, hosted trials and purchases disabled.
+
+Finish by reporting which build and installation checks passed, and anything
+I still need to do on the phone. I will start the first live conversation.
+```
+
+### Install with Xcode
 
 1. Clone [Chuloo/mural](https://github.com/Chuloo/mural), or download its ZIP. Open `Mural.xcodeproj` from the directory containing this README.
 2. In Xcode, open **Settings → Accounts** and add your Apple Account.
@@ -47,6 +86,8 @@ Managed free minutes, accounts and credit purchases are **not available in the i
 
 A public TestFlight link and App Store listing are not yet available. [Release preparation](release/README.md) records the outstanding requirements.
 
+The [Mural website](https://mural.chat) lives in the separate [Chuloo/mural-website repository](https://github.com/Chuloo/mural-website).
+
 ## Build and test
 
 From the directory containing `Package.swift`:
@@ -74,7 +115,6 @@ On 12 September 2026, the English, French, onboarding and AI-consent build passe
 | `scripts/` | Xcode project and procedural icon generators |
 | `docs/` | Setup, build and language-module guides |
 | `release/` | Submission drafts and public-release checks |
-| `site/` | Static website, legal pages and social preview artwork |
 | `server/` | Account, billing and hosted-service foundation; see its runbook before deploying |
 
 Read [how the language architecture works](docs/language-architecture.md) and [how to add a language](docs/add-language.md). Contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md); security issues belong in the [private reporting process](SECURITY.md).
@@ -83,4 +123,4 @@ Read [how the language architecture works](docs/language-architecture.md) and [h
 
 The native WebRTC package is pinned to [stasel/WebRTC 152.0.0](https://github.com/stasel/WebRTC/tree/152.0.0). The app bundles [third-party notices](App/ThirdPartyNotices.txt) and the SDK’s privacy manifest. Review upstream notices when changing the dependency.
 
-Mural is owned by Hackmamba and released under the [MIT License](LICENSE). Third-party components retain their own licenses. The Mural and Hackmamba names and logos identify the original project; the software license does not grant trademark rights.
+Mural is released under the [MIT License](LICENSE). Third-party components retain their own licenses. The Mural name and logo identify the original project; the software license does not grant trademark rights.

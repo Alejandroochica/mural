@@ -1,5 +1,0 @@
-.sites-runtime/
-.env*
-!.env.example
-node_modules/
-.DS_Store

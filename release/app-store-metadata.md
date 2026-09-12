@@ -46,7 +46,7 @@ Practise Norwegian Bokmål, Spanish from Spain, international English or French 
 
 This version requires your own OpenAI API key, API billing and access to the supported models. API usage is billed by OpenAI. Mural has no account requirement or credit purchases in this version. Audio and selected text are sent to OpenAI while you practise; provider retention policies apply. Mural does not save raw audio.
 
-Built by Hackmamba. Mural’s source is available under the MIT License at github.com/Chuloo/mural.
+Mural’s source is available under the MIT License at github.com/Chuloo/mural.
 
 ## Screenshot set
 

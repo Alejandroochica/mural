@@ -5,7 +5,7 @@ Use this checklist for the uploaded build, not just the source checkout. Require
 ## Resolve before uploading
 
 - [ ] Activate Apple Developer Program membership; the owner confirmed it is not active yet. Confirm the intended seller entity. A Personal Team installation cannot be distributed through TestFlight. [Apple distribution guide](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases)
-- [ ] Confirm Hackmamba’s exact legal entity name, country and App Review telephone. William Imoh and hi@hackmamba.io are confirmed; copyright ownership is Hackmamba. The source license is MIT, copyright 2026 Hackmamba; the App Store seller name follows the enrolled account.
+- [ ] Confirm the operator’s exact legal entity name, country and App Review telephone. William Imoh and hi@hackmamba.io are confirmed. Use the copyright holder recorded in [LICENSE](../LICENSE); the App Store seller name follows the enrolled account.
 - [ ] Register the existing app identifier with the distribution team, if available. Keep the installed personal build’s signing and bundle identifier stable until an explicit migration is planned.
 - [ ] Create Mural’s App Store Connect app record and choose the bundle ID, SKU and primary metadata language. Confirm name availability there.
 - [ ] Accept current developer agreements. Complete business/trader, banking and tax fields that apply to the selected distribution and payment model.
@@ -38,7 +38,7 @@ Apple allows up to 10,000 external testers per app; the first external build rec
 - [ ] Complete the listing fields in [the metadata draft](app-store-metadata.md), including description, keywords, category, support URL, copyright and review contact. [Required properties](https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties/)
 - [x] Prepare four **1320 × 2868** PNGs without transparency in [screenshots/en-US](screenshots/en-US/README.md). They show the current core interface with Spanish sample content. Recapture if these screens change before upload. Apple accepts one to ten screenshots per set; the current target is iPhone-only. [Screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
 - [ ] Complete the age-rating questionnaire from actual AI conversation and search behavior. Do not assume a child rating because this is an education app.
-- [ ] Complete App Privacy using [the data inventory](app-privacy.md), including relevant third-party processing. Do not select “Data Not Collected” merely because Hackmamba has no conversation database.
+- [ ] Complete App Privacy using [the data inventory](app-privacy.md), including relevant third-party processing. Do not select “Data Not Collected” merely because Mural’s operator has no conversation database.
 - [ ] Make only accessibility claims verified on the release build. Check VoiceOver labels, Dynamic Type, Reduce Motion, contrast, touch targets and keyboard behavior.
 - [ ] Confirm every supported region, availability date and price. Remove unavailable CTA links and draft placeholders from the app and website.
 - [ ] Submit the build with full review access and explanatory notes. Keep required services available through review. [App Review preparation](https://developer.apple.com/app-store/review/guidelines/)

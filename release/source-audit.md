@@ -1,6 +1,6 @@
 # Source release audit
 
-Review date: 12 September 2026. Target repository: [Chuloo/mural](https://github.com/Chuloo/mural). License: MIT, copyright 2026 Hackmamba.
+Review date: 12 September 2026. Target repository: [Chuloo/mural](https://github.com/Chuloo/mural). License: [MIT](../LICENSE).
 
 ## Findings
 
@@ -31,11 +31,12 @@ Publish from the directory containing `Package.swift`, keeping the following rel
 | `docs/`, `release/` | Technical guides and clearly labeled submission drafts |
 | `verification/validation.md` | Reviewed summary of completed tests and remaining limits |
 | `marketing/screenshots/iphone-17-spanish/` | Four reviewed simulator PNGs with synthetic Spanish learning content and their README |
-| `site/` | Website source and approved assets after its own build and secret check |
 | `server/` | Tested account/billing foundation and deployment runbook; public funding remains disabled |
 | `.github/workflows/` | Core and server checks on standard GitHub-hosted runners |
 
 Exclude `.build/`, `DerivedData/`, `.swiftpm/` workspace state, Xcode user data, all local credentials and signing profiles, `Config/Local.xcconfig`, raw verification JSON/logs, compiled archives, exports of learning data, the duplicate marketing ZIP, and editor/system files. Keep the historical `plan/` drafts local for the first release; they describe earlier personal-build assumptions.
+
+Website source and assets belong in the separate [Chuloo/mural-website repository](https://github.com/Chuloo/mural-website), which is being prepared independently. They are outside the app repository’s publication scope.
 
 ## Publication checks
 

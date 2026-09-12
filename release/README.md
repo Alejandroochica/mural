@@ -1,6 +1,6 @@
 # Release preparation
 
-Status: **source prepared; Apple distribution pending**. This directory contains drafts for the first public release of [Chuloo/mural](https://github.com/Chuloo/mural), owned by Hackmamba. It does not record an App Store submission or a live TestFlight link.
+Status: **source prepared; Apple distribution pending**. This directory contains drafts for the first public release of [Chuloo/mural](https://github.com/Chuloo/mural). It does not record an App Store submission or a live TestFlight link.
 
 | Document | Purpose |
 | --- | --- |
