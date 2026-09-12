@@ -13,7 +13,7 @@ test('unconfigured trial and hosted voice fail closed without database or provid
       assert.equal(response.statusCode, 503);
     }
     const wallet = await app.inject({ method: 'GET', url: '/v1/wallet' });
-    assert.equal(wallet.statusCode, 401);
+    assert.equal(wallet.statusCode, 503);
     const health = (await app.inject({ method: 'GET', url: '/healthz' })).json();
     assert.equal(health.hostedVoice, false); assert.equal(health.livePayments, false);
   } finally { await app.close(); await db.end(); }

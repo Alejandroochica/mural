@@ -47,3 +47,17 @@ test('expired and stale identity tokens are rejected', async () => {
     .setIssuedAt(1).setExpirationTime(2).sign(privateKey);
   await assert.rejects(verifyIdentity('google', value, digest(nonce), { googleClientID: 'mural-test-client' }, keys));
 });
+test('Google authorized party and multiple audiences cannot authorize another client', async () => {
+  await assert.rejects(verifyIdentity('google', await token({ azp: 'another-client' }), digest(nonce), { googleClientID: 'mural-test-client' }, keys));
+  const claims = { nonce, sub: 'subject', iss: 'https://accounts.google.com', aud: ['mural-test-client', 'another-client'], iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300 };
+  const multi = await new SignJWT(claims).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).sign(privateKey);
+  await assert.rejects(verifyIdentity('google', multi, digest(nonce), { googleClientID: 'mural-test-client' }, keys));
+  const authorized = await new SignJWT({ ...claims, azp: 'mural-test-client' }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).sign(privateKey);
+  assert.equal((await verifyIdentity('google', authorized, digest(nonce), { googleClientID: 'mural-test-client' }, keys)).subject, 'subject');
+});
+test('unexpected provider email content is never retained', async () => {
+  for (const email of ['not-an-email', 'x\ny@example.test', 'x'.repeat(300) + '@example.test']) {
+    const identity = await verifyIdentity('google', await token({ email }), digest(nonce), { googleClientID: 'mural-test-client' }, keys);
+    assert.equal(identity.email, null);
+  }
+});

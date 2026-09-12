@@ -93,6 +93,6 @@ Export writes a new JSON file with mode 600 and refuses to overwrite an existing
 
 ## Release checks
 
-Run the PostgreSQL integration tests before deployment. After deploying, confirm the three public health/pricing reads still work; test OPTIONS and a malformed POST without storing a real address; verify all auth, payment, trial, and voice routes still return the existing public gate. A full form test should use an operator-controlled address and remove its request afterward. No message is sent by submitting the form.
+Run the PostgreSQL integration tests before deployment. After deploying, confirm the three public health/pricing reads still work; test OPTIONS and a malformed POST without storing a real address; verify payment, trial, and voice routes still return the existing public gate. Accounts have a separate [enablement procedure](enable-accounts.md) and remain gated unless that procedure is applied. A full form test should use an operator-controlled address and remove its request afterward. No message is sent by submitting the form.
 
-Stripe remains a sandbox-only implementation. Dashboard catalog setup does not make billing operational: no secrets have been deployed, the webhook and purchase routes remain gated, and account identity, refunds/deletion support, taxes, storefront purchase rules, and hosted funding verification still require work. This endpoint does not change payment handling.
+Stripe remains a sandbox-only implementation. Dashboard catalog setup does not make billing operational: the webhook and purchase routes remain gated, and refunds/deletion support, taxes, storefront purchase rules, and hosted funding verification still require work. This endpoint does not change payment handling.

@@ -31,6 +31,11 @@ test('Apple deletion exchanges a fresh code, verifies its subject, signs ES256 c
   await adapter.revoke('account-id', 'fresh-one-time-code');
   assert.deepEqual(calls, ['https://appleid.apple.com/auth/token', 'https://appleid.apple.com/auth/revoke']);
 });
+test('Apple revocation key is validated before enabling Apple signup', async () => {
+  await new AppleTokenRevoker(db, config).validateConfiguration();
+  const bad = new AppleTokenRevoker(db, { ...config, privateKeyPEM: '-----BEGIN PRIVATE KEY-----\ninvalid\n-----END PRIVATE KEY-----' });
+  await assert.rejects(bad.validateConfiguration(), { code: 'apple_revocation_not_configured' });
+});
 test('Apple tokens from a different account or audience cannot authorize deletion', async () => {
   for (const [subject, audience] of [['other-account', config.clientID], ['account-apple-subject', 'other-client']]) {
     let calls = 0;

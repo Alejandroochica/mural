@@ -58,6 +58,16 @@ function canonicalIP(value: string): string {
   return `${full.slice(0, 4).map(part => part.padStart(4, '0')).join(':')}::/64`;
 }
 
+export function trustedClientNetwork(headers: IncomingHttpHeaders, remoteAddress: string, proxyToken: string, allowLoopback = false): string {
+  const supplied = headers['x-mural-proxy-token'], address = headers['x-mural-client-ip'];
+  if (typeof supplied === 'string' && typeof address === 'string') {
+    const actual = Buffer.from(supplied), expected = Buffer.from(proxyToken);
+    if (actual.length === expected.length && timingSafeEqual(actual, expected)) return canonicalIP(address);
+  }
+  if (allowLoopback && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return canonicalIP(remoteAddress);
+  throw new ServiceError('access_request_proxy_not_ready', 503);
+}
+
 export class AccessRequests {
   constructor(readonly db: Database, readonly config: AccessRequestConfig) {}
   allowedOrigin(origin: unknown): string {
@@ -65,13 +75,7 @@ export class AccessRequests {
     return origin;
   }
   clientAddress(headers: IncomingHttpHeaders, remoteAddress: string, origin: string): string {
-    const supplied = headers['x-mural-proxy-token'], address = headers['x-mural-client-ip'];
-    if (typeof supplied === 'string' && typeof address === 'string') {
-      const actual = Buffer.from(supplied), expected = Buffer.from(this.config.proxyToken);
-      if (actual.length === expected.length && timingSafeEqual(actual, expected)) return canonicalIP(address);
-    }
-    if (origin === this.config.localOrigin && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return canonicalIP(remoteAddress);
-    throw new ServiceError('access_request_proxy_not_ready', 503);
+    return trustedClientNetwork(headers, remoteAddress, this.config.proxyToken, origin === this.config.localOrigin);
   }
   async submit(body: unknown, address: string): Promise<void> {
     const parsed = parseAccessRequest(body);

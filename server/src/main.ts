@@ -7,6 +7,7 @@ import { AppleTokenRevoker } from './apple-revocation.js';
 import { HostedVoice } from './hosted-voice.js';
 import { OpenAILiveProvider } from './live-provider.js';
 import { AccessRequests, accessRequestConfig, pruneAccessRequests } from './access-requests.js';
+import { AuthAdmission, accountAdmissionConfig } from './auth-admission.js';
 
 const databaseURL = process.env.DATABASE_URL;
 if (!databaseURL) { console.error('DATABASE_URL is required.'); process.exit(1); }
@@ -22,6 +23,7 @@ try {
     appleKey = process.env.APPLE_KEY_ID, appleFile = process.env.APPLE_PRIVATE_KEY_PATH;
   const appleRevoker = appleClient && appleTeam && appleKey && appleFile ? new AppleTokenRevoker(db,
     { clientID: appleClient, teamID: appleTeam, keyID: appleKey, privateKeyPEM: await readFile(appleFile, 'utf8') }) : undefined;
+  await appleRevoker?.validateConfiguration();
   if (process.env.HOSTED_VOICE_EXPERIMENTAL === 'true') {
     const accounts = new Set((process.env.HOSTED_VOICE_ACCOUNT_ALLOWLIST ?? '').split(',').filter(Boolean));
     if ([...accounts].some(account => !/^[a-f0-9-]{36}$/.test(account))) throw new Error();
@@ -31,10 +33,14 @@ try {
   }
   const accessConfig = accessRequestConfig(process.env);
   const accessRequests = accessConfig ? new AccessRequests(db, accessConfig) : undefined;
+  const accountsConfig = accountAdmissionConfig(process.env);
+  const accounts = accountsConfig ? { admission: new AuthAdmission(db, accountsConfig) } : undefined;
+  if (accounts && !process.env.GOOGLE_CLIENT_ID && !(appleClient && appleRevoker)) throw new Error('No account identity provider configured.');
   await pruneAccessRequests(db);
-  const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient }, payments, appleRevoker, hosted, accessRequests });
+  await pruneAuthenticationRecords(db);
+  const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient }, payments, appleRevoker, hosted, accessRequests, accounts });
   const cleanup = setInterval(() => {
-    void pruneAuthenticationRecords(db).catch(() => {});
+    void pruneAuthenticationRecords(db).catch(() => { console.error('Account retention cleanup failed.'); });
     void pruneAccessRequests(db).catch(() => { console.error('Access request retention cleanup failed.'); });
   }, 15 * 60_000);
   cleanup.unref();

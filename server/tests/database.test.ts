@@ -107,7 +107,7 @@ integration('nonce challenges are single-use and account sessions are revoked on
   assert.equal(stored.token_hash, digest(session.accessToken)); assert.notEqual(stored.token_hash, session.accessToken);
   await deleteAccount(db!, session.accountID);
   await assert.rejects(authenticate(db!, `Bearer ${session.accessToken}`));
-  assert.equal((await db!.query('SELECT email FROM accounts WHERE id=$1', [session.accountID])).rows[0].email, null);
+  assert.equal((await db!.query('SELECT email FROM accounts WHERE id=$1', [session.accountID])).rowCount, 0);
 });
 integration('a signed raw HTTP webhook funds its mapped order and replay remains idempotent', async () => {
   const id = await account(), item = await order(id);
@@ -161,9 +161,10 @@ integration('checkout disables adaptive currency pricing so the quoted USD amoun
   payments.stripe.checkout.sessions.create = (async (request: Stripe.Checkout.SessionCreateParams) => {
     assert.deepEqual(request.adaptive_pricing, { enabled: false });
     assert.deepEqual(request.line_items, [{ price: 'price_test', quantity: 1 }]);
-    return { id: 'cs_fixed_usd', client_reference_id: request.client_reference_id, livemode: false, status: 'open',
+    return { id: `cs_fixed_usd_${randomUUID()}`, client_reference_id: request.client_reference_id, livemode: false, status: 'open',
       mode: 'payment', currency: 'usd', amount_total: 1216, adaptive_pricing: { enabled: false }, url: 'https://checkout.stripe.com/fixed-usd' };
   }) as never;
+  payments.stripe.checkout.sessions.expire = (async () => { throw new Error('Unexpected test checkout expiry'); }) as never;
   const response = await payments.checkout(db!, id, 'ai-10-usd', 'fixed-usd-quote');
   assert.deepEqual(response.quote, { currency: 'USD', aiMinor: 1000, serviceFeeMinor: 150, paymentFeeMinor: 66 });
 });
@@ -216,7 +217,8 @@ integration('racing checkout creation and deletion cannot leave a payable order 
     url: 'https://checkout.stripe.com/race-test' })) as never;
   const outcomes = await Promise.allSettled([payments.checkout(db!, id, 'ai-10-usd', 'deletion-race-key'), deleteAccount(db!, id)]);
   assert.equal(outcomes.filter(result => result.status === 'fulfilled').length, 1);
-  const deleted = (await db!.query('SELECT deleted_at FROM accounts WHERE id=$1', [id])).rows[0].deleted_at;
+  const owner = (await db!.query('SELECT deleted_at FROM accounts WHERE id=$1', [id])).rows[0];
+  const deleted = !owner || owner.deleted_at;
   const orders = (await db!.query('SELECT id FROM checkout_orders WHERE account_id=$1', [id])).rowCount;
   assert.equal(Boolean(deleted && orders), false);
 });

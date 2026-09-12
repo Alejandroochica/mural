@@ -1,15 +1,18 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Database } from './db.js';
-import { authenticate, createChallenge, deleteAccount, exchangeIdentity, type AppleRevoker, type AuthConfig } from './auth.js';
+import { accountProfile, authenticate, bearerHash, createChallenge, deleteAccount, exchangeIdentity, signOut, type verifyIdentity, type AppleRevoker, type AuthConfig } from './auth.js';
 import { ServiceError } from './errors.js';
 import { applyStripeEvent, type SandboxPayments } from './payments.js';
 import { RATE_VERSION } from './pricing.js';
 import { trialEligibility, UnconfiguredAttestor, type TrialAttestor } from './trial.js';
 import type { HostedVoice } from './hosted-voice.js';
 import { ACCESS_REQUEST_PATH, type AccessRequests } from './access-requests.js';
+import type { AuthAdmission } from './auth-admission.js';
 
-export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests }
+export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests;
+  accounts?: { admission: AuthAdmission; identityVerifier?: typeof verifyIdentity } }
+const accountPaths = new Set(['/v1/auth/challenge', '/v1/auth/exchange', '/v1/auth/sign-out', '/v1/account', '/v1/wallet']);
 const objectBody = (request: FastifyRequest): Record<string, unknown> => {
   if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Buffer.isBuffer(request.body)) throw new ServiceError('invalid_request');
   return request.body as Record<string, unknown>;
@@ -37,6 +40,18 @@ export function createApp(services: Services) {
   const windows = new Map<string, { until: number; count: number }>();
   app.addHook('onRequest', async (request, reply) => {
     reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
+    const path = request.url.split('?')[0]!;
+    if (accountPaths.has(path)) {
+      if (!services.accounts || (!services.auth.googleClientID && !(services.auth.appleClientID && services.appleRevoker))) throw new ServiceError('accounts_unavailable', 503);
+      try {
+        await services.accounts.admission.enter(path === '/v1/auth/challenge' ? 'challenge' : path === '/v1/auth/exchange' ? 'exchange' : 'account',
+          request.headers, request.raw.socket.remoteAddress ?? request.ip);
+      } catch (error) {
+        if (error instanceof ServiceError) { if (error.status === 429) reply.header('Retry-After', '3600'); throw error; }
+        throw new ServiceError('accounts_unavailable', 503);
+      }
+      return;
+    }
     // This endpoint has separate durable admission limits; Caddy's shared address is not its visitor identity.
     if (request.url.split('?')[0] === ACCESS_REQUEST_PATH) return;
     if (request.url === '/healthz') return;
@@ -97,31 +112,41 @@ export function createApp(services: Services) {
       return reply.code(202).send({ accepted: true });
     }
   });
-  app.post('/v1/auth/challenge', async () => createChallenge(db));
-  app.post('/v1/auth/exchange', async request => {
+  app.get('/v1/auth/providers', async () => ({ google: Boolean(services.accounts && services.auth.googleClientID),
+    apple: Boolean(services.accounts && services.auth.appleClientID && services.appleRevoker) }));
+  app.post('/v1/auth/challenge', { bodyLimit: 1024 }, async request => {
+    if (Object.keys(objectBody(request)).length) throw new ServiceError('invalid_request');
+    return createChallenge(db);
+  });
+  app.post('/v1/auth/exchange', { bodyLimit: 20_000 }, async request => {
     const body = objectBody(request), provider = stringField(body, 'provider', 10);
+    if (Object.keys(body).some(key => !['provider', 'idToken', 'challengeID'].includes(key))) throw new ServiceError('invalid_request');
     if (provider !== 'google' && provider !== 'apple') throw new ServiceError('invalid_identity_provider');
     // Apple account creation cannot be enabled before account deletion can revoke Apple authorization.
     if (provider === 'apple' && !services.appleRevoker) throw new ServiceError('apple_sign_in_not_ready', 503);
-    return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth);
+    return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth, services.accounts?.identityVerifier);
   });
+  app.get('/v1/account', async request => accountProfile(db, request.headers.authorization));
   app.get('/v1/wallet', async request => {
-    const account = await authenticate(db, request.headers.authorization);
-    const wallet = (await db.query('SELECT balance_nano,reserved_nano FROM wallets WHERE account_id=$1', [account])).rows[0];
+    const wallet = (await db.query(`SELECT w.balance_nano,w.reserved_nano FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
+      JOIN wallets w ON w.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now() AND s.revoked_at IS NULL AND a.deleted_at IS NULL`,
+    [bearerHash(request.headers.authorization)])).rows[0];
+    if (!wallet) throw new ServiceError('sign_in_required', 401);
     return { currency: 'USD', balanceNanoUSD: wallet.balance_nano, reservedNanoUSD: wallet.reserved_nano,
       availableNanoUSD: (BigInt(wallet.balance_nano) - BigInt(wallet.reserved_nano)).toString() };
   });
-  app.post('/v1/auth/sign-out', async request => {
-    const account = await authenticate(db, request.headers.authorization);
-    await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE account_id=$1', [account]);
+  app.post('/v1/auth/sign-out', { bodyLimit: 1024 }, async request => {
+    if (Object.keys(objectBody(request)).length) throw new ServiceError('invalid_request');
+    await signOut(db, request.headers.authorization);
     return { signedOut: true };
   });
-  app.delete('/v1/account', async request => {
+  app.delete('/v1/account', { bodyLimit: 5120 }, async request => {
     const account = await authenticate(db, request.headers.authorization);
-    const code = request.body && typeof request.body === 'object' && 'appleAuthorizationCode' in request.body && typeof request.body.appleAuthorizationCode === 'string'
-      ? request.body.appleAuthorizationCode : undefined;
-    await deleteAccount(db, account, services.appleRevoker, code);
-    return { deleted: true, retained: 'Only required financial records, linked to an opaque account ID.' };
+    const body = objectBody(request);
+    if (Object.keys(body).some(key => key !== 'appleAuthorizationCode')) throw new ServiceError('invalid_request');
+    const code = body.appleAuthorizationCode === undefined ? undefined : stringField(body, 'appleAuthorizationCode', 4096);
+    const result = await deleteAccount(db, account, services.appleRevoker, code, request.headers.authorization);
+    return { deleted: true, retained: result.retainedFinancialRecords ? 'Required financial records, linked to an opaque account ID.' : null };
   });
   app.post('/v1/checkout', async request => {
     const account = await authenticate(db, request.headers.authorization);

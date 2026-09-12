@@ -13,6 +13,10 @@ export class AppleTokenRevoker implements AppleRevoker {
     if (!config.clientID || !/^[A-Z0-9]{10}$/.test(config.teamID) || !/^[A-Z0-9]{10}$/.test(config.keyID) || !config.privateKeyPEM.includes('BEGIN PRIVATE KEY'))
       throw new ServiceError('apple_revocation_not_configured', 503);
   }
+  async validateConfiguration(): Promise<void> {
+    try { await importPKCS8(this.config.privateKeyPEM, 'ES256'); }
+    catch { throw new ServiceError('apple_revocation_not_configured', 503); }
+  }
   async revoke(accountID: string, freshAuthorizationCode: string, lockedAppleSubject?: string): Promise<void> {
     if (!freshAuthorizationCode || freshAuthorizationCode.length > 4096) throw new ServiceError('invalid_apple_authorization_code');
     // Deletion passes the subject read while holding its account lock, avoiding a second pool checkout.
