@@ -2,14 +2,18 @@
 
 Use this checklist for the uploaded build, not just the source checkout. Requirements were checked against Apple’s official documentation on 12 September 2026.
 
+The current completed work and remaining credentials, code and verification tasks are summarized in [release status](README.md). An unsigned archive does not complete the distribution or review steps below.
+
 ## Resolve before uploading
 
 - [ ] Activate Apple Developer Program membership; the owner confirmed it is not active yet. Confirm the intended seller entity. A Personal Team installation cannot be distributed through TestFlight. [Apple distribution guide](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases)
-- [ ] Confirm the operator’s exact legal entity name, country and App Review telephone. William Imoh and hi@hackmamba.io are confirmed. Use the copyright holder recorded in [LICENSE](../LICENSE); the App Store seller name follows the enrolled account.
+- [x] Confirm the operator as **Hackmamba Inc., incorporated in the United States**. William Imoh and hi@hackmamba.io are confirmed contacts. Use the copyright holder recorded in [LICENSE](../LICENSE); the App Store seller name follows the enrolled account.
+- [ ] Obtain the App Review telephone privately and confirm the enrolled Apple seller entity when membership is active.
 - [ ] Register the existing app identifier with the distribution team, if available. Keep the installed personal build’s signing and bundle identifier stable until an explicit migration is planned.
 - [ ] Create Mural’s App Store Connect app record and choose the bundle ID, SKU and primary metadata language. Confirm name availability there.
 - [ ] Accept current developer agreements. Complete business/trader, banking and tax fields that apply to the selected distribution and payment model.
-- [ ] Deploy the privacy and support URLs with hi@hackmamba.io, confirm they work without login, and add accessible links inside the app. `mural.chat` is the intended domain; it is not evidence of deployment.
+- [x] Add persistent Settings links to `https://mural.chat/privacy/`, `https://mural.chat/terms/` and `https://mural.chat/support/`. The onboarding and existing-user consent screens also link to privacy.
+- [x] Verify all three URLs over HTTPS without login. Privacy, terms and support returned HTTP 200 on September 12, 2026; the support page links to hi@hackmamba.io.
 - [ ] Decide the review-access route. The current BYOK build needs a provisioned review credential or a working managed-access flow. A reviewer should not need to buy their own OpenAI access. Never embed a shared key in the app or commit review credentials.
 
 ## Validate the binary
@@ -45,6 +49,6 @@ Apple allows up to 10,000 external testers per app; the first external build rec
 
 ## Gates for accounts and credits
 
-When account creation ships, add an in-app route to delete the account and associated data. Deactivation alone does not meet Apple’s requirement. Automatically created guest accounts count too; explain any legally required billing retention. Sign in with Apple tokens need revocation during deletion. [Apple account-deletion guidance](https://developer.apple.com/support/offering-account-deletion-in-your-app/)
+An account-deletion route exists in the disabled account foundation. Before activation, verify it against the real server and complete the unresolved-balance/payment workflow. Deactivation alone does not meet Apple’s requirement. Automatically created guest accounts count too; explain any legally required billing retention. Verify Sign in with Apple token revocation during deletion on a real device. [Apple account-deletion guidance](https://developer.apple.com/support/offering-account-deletion-in-your-app/)
 
 A paid service needs server-verified entitlements, purchase reconciliation, refund handling and revised privacy disclosures. The proposed Stripe flow and Google sign-in must be checked against the selected storefront rules before submission; the present checklist does not approve them.

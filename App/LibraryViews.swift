@@ -353,6 +353,14 @@ struct SettingsView: View {
                     Text("Backups include transcripts and learning evidence, never your API key. Import adds conversations with new IDs. Existing conversations stay unchanged. There is no cloud sync.")
                 }
                 Section {
+                    Link("Privacy policy", destination: URL(string: "https://mural.chat/privacy/")!)
+                        .accessibilityIdentifier("settings-privacy-policy")
+                    Link("Terms of use", destination: URL(string: "https://mural.chat/terms/")!)
+                        .accessibilityIdentifier("settings-terms")
+                    Link("Contact support", destination: URL(string: "https://mural.chat/support/")!)
+                        .accessibilityIdentifier("settings-support")
+                } header: { Text("Help and privacy") }
+                Section {
                     Text("Mural 0.1 · Personal build").font(.footnote)
                     Text("Voice: GPT-Live-1 · Teacher: GPT-5.6 Luna").font(.footnote)
                     Link("OpenAI data controls", destination: URL(string: "https://developers.openai.com/api/docs/guides/your-data")!)

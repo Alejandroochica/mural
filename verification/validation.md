@@ -97,3 +97,14 @@ The source now includes Google sign-in through the system authentication browser
 - The seven new account source, test and documentation files were scanned for secret-shaped keys, signing material, private local paths and device identifiers; no matches were found. Fixtures use synthetic values. Google's button artwork is the unmodified provider asset with its source and branding notice recorded.
 
 No Google or Apple account was signed in, no provider credentials were configured, and no live Mural account or payment was created during this verification. Keychain persistence, configured provider callbacks and Apple authorization revocation still require device checks against the deployed server. See [managed-account setup](../docs/managed-accounts.md) for configuration and the remaining checks.
+
+## Permanent release links
+
+12 September 2026
+
+Settings now has a **Help and privacy** section with `https://mural.chat/privacy/`, `https://mural.chat/terms/` and `https://mural.chat/support/`. Existing onboarding, consent and disabled-account links already used the intended privacy and terms URLs.
+
+- A source check confirmed all seven native release-link occurrences use HTTPS, the intended domain and the canonical paths, without query strings or fragments.
+- The combined simulator build and the existing Settings navigation test passed at 14:42 CEST. This checked the secure-key disclosure and return to Talk; it did not browse the release pages.
+- The unsigned **0.1.0 (1)** archive was refreshed at 14:44 CEST with the Settings links. Compilation and archive creation are not Apple upload validation, TestFlight review or App Store approval.
+- Custom-domain availability remained pending at this checkpoint. Confirm all three pages load without login after DNS propagation before submitting the app.

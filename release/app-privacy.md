@@ -15,7 +15,7 @@ Source reviewed on 12 September 2026. This describes the direct-to-OpenAI BYOK b
 | Legacy migration backup | Protected file in Application Support on upgraded installations; removed by Delete all learning | `App/Storage.swift` |
 | Debug verification | Content-free local diagnostics, only in an explicitly invoked Debug verification run | `App/AudioVerification.swift` |
 
-There is no Mural account database, ad SDK, analytics SDK, tracking identifier collection, CloudKit sync or saved raw audio in this source build. Ordinary iOS device backups are controlled by the user and Apple; local storage does not mean that a user-created backup can never leave the phone.
+The current iPhone build does not connect to a Mural account database. It has no ad SDK, analytics SDK, tracking identifier collection, CloudKit sync or saved raw audio. Account and server foundations exist in source but remain disabled. Ordinary iOS device backups are controlled by the user and Apple; local storage does not mean that a user-created backup can never leave the phone.
 
 ## Provider retention
 

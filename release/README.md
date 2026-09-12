@@ -1,18 +1,50 @@
-# Release preparation
+# Release status
 
-Status: **source prepared; Apple distribution pending**. This directory contains drafts for the first public release of [Chuloo/mural](https://github.com/Chuloo/mural). It does not record an App Store submission or a live TestFlight link.
+**The source is public. Apple distribution and the managed service are pending.** This checklist separates the current BYOK app from future accounts, free minutes and credit purchases. No TestFlight invitation or App Store submission has been completed.
 
-| Document | Purpose |
+## Completed
+
+- [x] Publish [the iPhone app repository](https://github.com/Chuloo/mural) under MIT. The documentation release `d0b3bb5` passed CI.
+- [x] Publish [the separate website repository](https://github.com/Chuloo/mural-website), at `ccdcc66`, and make [mural.chat](https://mural.chat/) available over HTTPS.
+- [x] Verify the privacy, terms and support pages on the custom domain return HTTP 200 without login. Confirm the operator as **Hackmamba Inc., incorporated in the United States**, with support at hi@hackmamba.io.
+- [x] Implement Norwegian, Spanish, English and French modules, language/subtitle onboarding, versioned AI consent, local backups and the existing conversation controls.
+- [x] Pass 48 core tests and the 11-test language/onboarding UI suite. The latter ran before account integration; a later onboarding check compiled the combined source. See [the verification record](../verification/validation.md) for the tested builds and limits.
+- [x] Prepare four **1320 × 2868** [App Store screenshots](screenshots/en-US/README.md), app icons, first-party and WebRTC privacy manifests, and third-party notices.
+- [x] Prepare [listing and review-note drafts](app-store-metadata.md) and a [BYOK privacy inventory](app-privacy.md). These have not been entered or approved in App Store Connect.
+- [x] Compile an unsigned **0.1.0 (1)** iOS Release archive with both privacy manifests and debug symbols. This is a local compilation check; Apple distribution signing, upload validation and review remain pending.
+
+The local archive is `.build/ReleasePrep/Mural-0.1.0-unsigned.xcarchive`, refreshed at 14:44 CEST on September 12 with the permanent Settings links. The simulator build and existing Settings navigation check passed before archiving. Publication scope and exclusions are recorded in [the source audit](source-audit.md).
+
+## Finish the BYOK release
+
+| Remaining item | What is needed |
 | --- | --- |
-| [Apple release checklist](apple-release.md) | TestFlight and App Store steps, owners and blocking requirements |
-| [Listing draft](app-store-metadata.md) | Store copy, review notes and missing submission fields |
-| [Privacy inventory](app-privacy.md) | Source-based data-flow inventory and draft App Privacy answers |
-| [Source release audit](source-audit.md) | Publication scope, exclusions and audit findings |
+| Apple membership and seller | Activate paid Apple Developer Program membership and confirm the enrolled App Store seller matches the intended entity. The operator is Hackmamba Inc., incorporated in the United States. William Imoh and hi@hackmamba.io are confirmed contacts; the private App Review telephone is still needed. |
+| Apple app record and signing | Register the app identifier, create the App Store Connect record and SKU, accept agreements, and produce a distribution-signed archive. Preserve the personal installation’s signing identity until a migration is planned. |
+| Review access | Provision working review access so the reviewer can use speech without purchasing OpenAI access. Supply credentials privately; do not bundle or commit a shared key. |
+| Final device checks | Test the candidate on an iPhone: microphone denial, offline/failing API requests, interruptions, cellular use, reset, meanings, export/import and deletion. Review pronunciation and corrections for all four languages; earlier Spanish checks do not establish English or French quality. |
+| Store declarations | Finalize privacy, age rating, accessibility claims, export compliance, regions and pricing against the uploaded build. Resolve remaining fields in the listing draft. |
+| Distribution | Validate and upload through Xcode, verify an internal TestFlight installation, complete external beta review, then enable and check a public invitation. App Store review is a separate submission. |
 
-The current app uses the device owner’s OpenAI key. The native account client and server foundations are present in source but disabled. Accounts, managed free minutes and purchased credits need their own release review before activation. Do not advertise those features until the uploaded build contains and supports them.
+The app’s onboarding and AI-consent screens link to the privacy policy. Settings now includes all three release pages. The disabled account view also links to privacy and terms.
 
-## Prepared build and assets
+| Page | Canonical URL | Availability |
+| --- | --- | --- |
+| Privacy | https://mural.chat/privacy/ | Live; HTTPS 200 verified September 12, 2026 |
+| Terms | https://mural.chat/terms/ | Live; HTTPS 200 verified September 12, 2026 |
+| Support | https://mural.chat/support/ | Live; HTTPS 200 verified September 12, 2026 |
 
-An unsigned **0.1.0 (1)** iOS Release archive was refreshed successfully on September 12, 2026 at `.build/ReleasePrep/Mural-0.1.0-unsigned.xcarchive`. It contains the final consent and onboarding changes and the disabled account foundation, plus the app and WebRTC privacy manifests, third-party notices and debug symbols. Four 6.9-inch screenshots are prepared under [screenshots/en-US](screenshots/en-US/README.md).
+Use [the Apple release checklist](apple-release.md) for the upload sequence and official requirements. Keep final candidate verification distinct from the historical results above.
 
-The archive is a compilation check, not a TestFlight upload. Apple Developer Program membership is not active yet, so distribution signing and upload remain pending. Once membership is active, archive with the distribution team and validate through Xcode before uploading. Store metadata and review-access requirements remain listed in [the checklist](apple-release.md).
+## Finish before enabling the managed service
+
+These items do not block a correctly disclosed BYOK build. They do block promising free minutes, accounts or purchased credits to users.
+
+- [ ] Deploy the server and database with restricted runtime privileges, secret storage, financial backups, recovery and operational alerts. No production account or payment service is running.
+- [ ] Configure Google’s native OAuth client and Apple’s identity credentials/capability. Verify sign-in, secure session restore, expiry, sign-out and Apple authorization revocation on a real device. Complete deletion with unresolved balances/payments and recovery after device loss.
+- [ ] Verify the hosted voice adapter against a bounded real provider call, including cutoff, hangup, final usage, network failure and reconciliation. Implement budgets for hosted teaching, subtitles and search.
+- [ ] Implement App Attest/DeviceCheck verification, durable trial claims, the ten-minute allowance and a global free-use budget. The current trial attestor rejects requests.
+- [ ] Complete StoreKit verification and storefront routing for in-app sales, plus live payment activation, refunds, dispute resolution, taxes and transparent receipts. Stripe sandbox tests alone do not enable App Store purchases.
+- [ ] Update privacy, terms, App Privacy answers and review access for the actual account, billing and usage records before activation.
+
+The native account client and server foundation are implemented but disabled. Their offline tests used synthetic identities and provider responses. See [native setup](../docs/managed-accounts.md) and [the server runbook](../server/README.md) for exact configuration and implementation gaps.

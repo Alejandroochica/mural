@@ -11,10 +11,11 @@ Prepared for the current BYOK build on 12 September 2026. Replace every `[REQUIR
 | Primary category | Education |
 | Secondary category | None proposed |
 | Copyright | 2026 Hackmamba |
-| Marketing URL | `https://mural.chat` — pending deployment |
-| Support URL | `https://mural.chat/support — pending deployment; hi@hackmamba.io` |
-| Privacy Policy URL | `https://mural.chat/privacy` — pending deployment and legal entity details |
+| Marketing URL | `https://mural.chat/` — live |
+| Support URL | `https://mural.chat/support/` — live; hi@hackmamba.io |
+| Privacy Policy URL | `https://mural.chat/privacy/` — live |
 | Repository | https://github.com/Chuloo/mural |
+| Operator | Hackmamba Inc., incorporated in the United States |
 | Seller | `[REQUIRED: exact enrolled Apple Developer entity]` |
 | App Review contact | `William Imoh · hi@hackmamba.io · [REQUIRED: telephone, entered privately]` |
 | Age rating | `[REQUIRED: complete the current questionnaire for the shipped AI/search behavior]` |
