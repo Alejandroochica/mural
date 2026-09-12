@@ -12,4 +12,4 @@ Do not disclose an unpatched vulnerability or credential in a public issue. If t
 
 Useful reports include credential exposure, unauthorized data access, unsafe backup import, content leaking between learners or languages, and ways to bypass future server-enforced usage limits. Incorrect model answers and pronunciation problems belong in ordinary bug reports unless they reveal a security issue.
 
-Maintainer release requirement: enable GitHub private vulnerability reporting before the first public release. A response-time commitment has not yet been established.
+Private vulnerability reporting, secret scanning and push protection are enabled. Dependency alerts and security updates are enabled too. CodeQL and the full-history secret-scan workflow check source changes. See the [September 12 review](release/security-audit-2026-09-12.md) for scope and limitations. A response-time commitment has not yet been established.

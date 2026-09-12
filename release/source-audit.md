@@ -1,6 +1,8 @@
-# Source release audit
+# Initial source release audit
 
 Review date: 12 September 2026. Target repository: [Chuloo/mural](https://github.com/Chuloo/mural). License: [MIT](../LICENSE).
+
+The later [security audit](security-audit-2026-09-12.md) covers public Git history, deployed accounts and the resulting security fixes. The findings below describe the initial publication checkpoint.
 
 ## Findings
 
