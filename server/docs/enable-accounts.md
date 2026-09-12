@@ -42,9 +42,19 @@ Keep `HOSTED_VOICE_EXPERIMENTAL=false`, no hosted account allowlist or spending 
 
 ## Expose only the account routes
 
-The API hostname currently reaches Caddy directly through a DNS-only A record. Keep PostgreSQL and the API container ports private, disable request access logs, and retain the existing waitlist and health routes. Add these Caddy handlers before the catch-all public gate:
+The API hostname currently reaches Caddy directly through a DNS-only A record. Keep PostgreSQL and the API container ports private, disable request access logs, and retain the existing waitlist route. Update the existing foundation handler and add the account handlers before the catch-all public gate:
 
 ```caddyfile
+@foundation {
+  method GET HEAD
+  path /healthz /readyz /v1/pricing
+}
+handle @foundation {
+  reverse_proxy api:8080 {
+    header_up X-Mural-Client-IP {remote_host}
+    header_up X-Mural-Proxy-Token {$ACCOUNTS_PROXY_TOKEN}
+  }
+}
 @accountRead {
   method GET
   path /v1/auth/providers /v1/account
@@ -77,7 +87,7 @@ handle @accountDelete {
 }
 ```
 
-Pass `ACCOUNTS_PROXY_TOKEN` into the Caddy container too. Caddy must overwrite both headers; app code ignores untrusted forwarding headers. Keep `/v1/wallet`, `/v1/checkout`, `/v1/webhooks/stripe`, `/v1/trial/*` and `/v1/live/*` behind the existing gate. Account routes do not need browser CORS. Revisit the trusted-address boundary if another proxy is inserted in front of Caddy.
+Pass `ACCOUNTS_PROXY_TOKEN` into the Caddy container too. Caddy must overwrite both headers; app code ignores untrusted forwarding headers. Public read throttling also uses this authenticated network identity, so `/readyz`, `/v1/pricing` and `/v1/auth/providers` require the headers whenever accounts are configured. `/healthz` remains available without them. Keep `/v1/wallet`, `/v1/checkout`, `/v1/webhooks/stripe`, `/v1/trial/*` and `/v1/live/*` behind the existing gate. Account routes do not need browser CORS. Revisit the trusted-address boundary if another proxy is inserted in front of Caddy.
 
 ## Verify the deployment
 

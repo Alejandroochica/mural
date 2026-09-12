@@ -116,8 +116,8 @@ integration('a signed raw HTTP webhook funds its mapped order and replay remains
   try {
     const payload = JSON.stringify(event('checkout.session.completed', item.paid), null, 2);
     const signature = payments.stripe.webhooks.generateTestHeaderString({ payload, secret: payments.webhookSecret });
-    for (let repeat = 0; repeat < 2; repeat++) {
-      const response = await app.inject({ method: 'POST', url: '/v1/webhooks/stripe', payload,
+    for (const url of ['/v1/webhooks/stripe', '/v1/webhooks/%73tripe']) {
+      const response = await app.inject({ method: 'POST', url, payload,
         headers: { 'content-type': 'application/json', 'stripe-signature': signature } });
       assert.equal(response.statusCode, 200);
     }

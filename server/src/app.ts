@@ -1,5 +1,5 @@
 import Fastify, { type FastifyRequest } from 'fastify';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { Database } from './db.js';
 import { accountProfile, authenticate, bearerHash, createChallenge, deleteAccount, exchangeIdentity, signOut, type verifyIdentity, type AppleRevoker, type AuthConfig } from './auth.js';
 import { ServiceError } from './errors.js';
@@ -7,7 +7,7 @@ import { applyStripeEvent, type SandboxPayments } from './payments.js';
 import { RATE_VERSION } from './pricing.js';
 import { trialEligibility, UnconfiguredAttestor, type TrialAttestor } from './trial.js';
 import type { HostedVoice } from './hosted-voice.js';
-import { ACCESS_REQUEST_PATH, type AccessRequests } from './access-requests.js';
+import { ACCESS_REQUEST_PATH, trustedClientNetwork, type AccessRequests } from './access-requests.js';
 import type { AuthAdmission } from './auth-admission.js';
 
 export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests;
@@ -34,13 +34,14 @@ export function createApp(services: Services) {
   // No request bodies, Authorization headers, tokens, transcripts, or Stripe payloads are logged.
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    if (request.url.split('?')[0] === '/v1/webhooks/stripe') return done(null, body);
+    if (request.routeOptions.url === '/v1/webhooks/stripe') return done(null, body);
     try { done(null, JSON.parse(body.toString())); } catch { done(new ServiceError('invalid_json')); }
   });
   const windows = new Map<string, { until: number; count: number }>();
   app.addHook('onRequest', async (request, reply) => {
     reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
-    const path = request.url.split('?')[0]!;
+    // Fastify decodes static route names. Security checks must use the matched route too.
+    const path = request.routeOptions.url ?? request.url.split('?')[0]!;
     if (accountPaths.has(path)) {
       if (!services.accounts || (!services.auth.googleClientID && !(services.auth.appleClientID && services.appleRevoker))) throw new ServiceError('accounts_unavailable', 503);
       try {
@@ -53,14 +54,21 @@ export function createApp(services: Services) {
       return;
     }
     // This endpoint has separate durable admission limits; Caddy's shared address is not its visitor identity.
-    if (request.url.split('?')[0] === ACCESS_REQUEST_PATH) return;
-    if (request.url === '/healthz') return;
+    if (path === ACCESS_REQUEST_PATH || path === '/healthz') return;
+    let networkKey = request.ip;
+    const proxy = services.accounts?.admission.config ?? services.accessRequests?.config;
+    if (proxy) {
+      let network: string;
+      try { network = trustedClientNetwork(request.headers, request.raw.socket.remoteAddress ?? request.ip, proxy.proxyToken); }
+      catch { throw new ServiceError('trusted_proxy_required', 503); }
+      networkKey = createHmac('sha256', Buffer.from(proxy.hmacKey, 'hex')).update(network).digest('hex');
+    }
     const now = Date.now();
     if (windows.size > 10_000) for (const [key, value] of windows) if (value.until < now) windows.delete(key);
-    let slot = windows.get(request.ip);
+    let slot = windows.get(networkKey);
     if (!slot || slot.until < now) {
       if (windows.size >= 20_000) throw new ServiceError('rate_limit', 429);
-      slot = { until: now + 60_000, count: 0 }; windows.set(request.ip, slot);
+      slot = { until: now + 60_000, count: 0 }; windows.set(networkKey, slot);
     }
     if (++slot.count > 120) throw new ServiceError('rate_limit', 429);
   });

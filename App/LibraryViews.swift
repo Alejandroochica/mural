@@ -324,7 +324,12 @@ struct SettingsView: View {
                             catch { message = error.localizedDescription }
                         }.disabled(key.isEmpty || coordinator.isRunning)
                         Link("Open OpenAI API keys", destination: URL(string: "https://platform.openai.com/api-keys")!)
-                        if hasKey { Button("Remove key", role: .destructive) { CredentialStore.delete(); hasKey = false }.disabled(coordinator.isRunning) }
+                        if hasKey {
+                            Button("Remove key", role: .destructive) {
+                                do { try CredentialStore.delete(); hasKey = false; message = "Your key has been removed." }
+                                catch { message = error.localizedDescription }
+                            }.disabled(coordinator.isRunning)
+                        }
                         Text("Your OpenAI account pays for usage. The key stays in this iPhone’s Keychain and is sent only to OpenAI.")
                             .font(.footnote).foregroundStyle(MuralColor.secondary)
                     } label: { Label("Use your own API key", systemImage: "key").accessibilityIdentifier("advanced-api-key") }
@@ -375,7 +380,7 @@ struct SettingsView: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
             do {
                 let url = try result.get(); let granted = url.startAccessingSecurityScopedResource(); defer { if granted { url.stopAccessingSecurityScopedResource() } }
-                try store.importData(Data(contentsOf: url)); message = "Your backup has been imported."
+                try store.importData(Archive.readImportData(from: url)); message = "Your backup has been imported."
             } catch { message = error.localizedDescription }
         }
         .confirmationDialog("Delete all learning data on this phone?", isPresented: $deleting, titleVisibility: .visible) {

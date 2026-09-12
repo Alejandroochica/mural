@@ -83,12 +83,7 @@ import MuralCore
     func exportData() throws -> Data { try archive.encoded() }
     func importData(_ data: Data) throws {
         let imported = try Archive.decode(data)
-        let known = Set(archive.sessions.map(\.id))
-        for var session in imported.sessions where !known.contains(session.id) {
-            session.invalidateChangedAssessments()
-            session.assessments = session.assessments.compactMap { LearningEngine.validate($0, session: session) }
-            archive.sessions.append(session)
-        }
+        archive = try archive.merging(imported)
         persist()
     }
     private func persist() {
@@ -118,9 +113,18 @@ enum CredentialStore {
             guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw KeyError.save }
         } else if status != errSecSuccess { throw KeyError.save }
     }
-    static func delete() { SecItemDelete(query as CFDictionary) }
+    static func delete() throws {
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw KeyError.remove }
+    }
     enum KeyError: LocalizedError {
-        case invalid, save
-        var errorDescription: String? { self == .invalid ? "Enter a valid OpenAI API key." : "The key couldn’t be saved to this device’s Keychain." }
+        case invalid, save, remove
+        var errorDescription: String? {
+            switch self {
+            case .invalid: "Enter a valid OpenAI API key."
+            case .save: "The key couldn’t be saved to this device’s Keychain."
+            case .remove: "The key couldn’t be removed. Unlock this iPhone and try again."
+            }
+        }
     }
 }

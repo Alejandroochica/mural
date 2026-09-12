@@ -133,3 +133,26 @@ The account screen shows a terms agreement and privacy acknowledgment before sig
 At this checkpoint, the configured Google build had not been installed and no real Google login, account creation, persistence, sign-out or deletion had been verified. The UI runs used preview mode and did not contact an identity provider. Apple authorization and revocation also remain unverified. These results establish native build and layout readiness, not a completed live account flow.
 
 At 16:48:47 CEST, the signed Google-configured update was installed over the existing app and launched normally on the authorized iPhone. The personal signing identity and `no.william.mural` bundle were preserved; no uninstall, learning-data changes, onboarding reset or credential inspection was performed. The user was directed to **Settings → Account → Sign in with Google**. Actual Google authorization and the resulting account profile remain pending confirmation.
+
+Later on 12 September, the owner confirmed that Google sign-in worked on that installed build. This is a user-confirmed live authorization result; no bearer token, Google credential or OpenAI key was inspected. Relaunch persistence, cancellation, sign-out, expiry and account deletion remain unverified on the physical phone. Apple sign-in and revocation remain pending.
+
+## Native security review
+
+12 September 2026
+
+The review covered tracked native source and fixtures: Keychain services, OAuth PKCE/state/callback handling, session scope, fixed API destinations and redirects, ATS settings, source links, diagnostics, backup import/export and the pinned WebRTC package. It found and corrected these issues:
+
+- The file importer read the entire selected file before enforcing the 30 MB archive limit. It now checks file size and uses a bounded read that also rejects growth beyond the limit.
+- Imported durations, usage counters and revision numbers could exceed the range used by the interface. Extreme values passed the old decoder and could later trap during integer conversion or addition. Regression tests first reproduced acceptance, then passed after validation was added. Date values are now bounded too.
+- Separately valid imports could produce a combined archive beyond the size or session limits accepted on relaunch. Import now validates the complete candidate before replacing local history. Duplicate sessions stay unchanged, local preferences and AI consent stay local, and invalid learning evidence is removed.
+- Removing the OpenAI key ignored the Keychain result and always changed the UI to report removal. It now reports success only for a successful deletion or an already-absent item, and keeps the existing state when removal fails.
+
+**60 Core tests passed** at 17:17 CEST, including four new backup-security tests and both merged byte/session limits. The synthetic numeric-import test failed with three acceptance errors before the fix. **Two focused native UI tests passed** at 17:14 CEST for Settings/account/API-key navigation and account-free language onboarding. The completed result is `Test-Mural-2026.09.12_17-13-31-+0200.xcresult`. No real account, API key or learning backup was used by these tests.
+
+The tracked-file credential-pattern scan found no usable embedded key. Its only private-key marker was an intentionally invalid server test fixture. The reviewed network paths use HTTPS and reject redirects for credential-bearing requests; ATS has no transport exceptions. No app WebView or app code that logs credentials was found. Source links accept HTTPS without user-info, and the word-lookup link handler is confined to the caption view.
+
+WebRTC remains pinned to 152.0.0 and package revision `1d04692697cb642bfebf6ad2dd99fe52649c3d6d`. The package's binary checksum matches the publisher's [M152 release metadata](https://github.com/stasel/WebRTC/releases/tag/152.0.0). This is dependency provenance verification, not a source or binary audit of WebRTC. The project describes separate [security tracking for standalone clients](https://webrtc.github.io/webrtc-org/bugs/security/).
+
+This was a bounded source review with synthetic regression tests, not a penetration test, exhaustive fuzzing, traffic interception or device Keychain inspection. Physical-device Keychain failure handling, sign-out/deletion and the new backup paths still need device checks. The fixes had not been installed at this checkpoint. The review also flagged account email/user-ID privacy declarations for the separate release-preparation work.
+
+The signed security update subsequently built successfully and was installed over the existing iPhone app at approximately 17:21 CEST, using the same personal team and `no.william.mural` bundle. No uninstall, learning-data change, credential inspection, sign-in action or AI request was performed. The normal launch attempt at 17:21:04 was denied by iOS because the phone was locked (`FBSOpenApplicationErrorDomain` code 7, `Locked`). Installation is verified; opening and checking this updated build on the phone remains pending unlock.

@@ -37,7 +37,7 @@ Errors have the form `{ "error": { "code": "…" } }`, with no reflected request
 | `503 apple_sign_in_not_ready` | Apple signup cannot proceed without configured revocation. |
 | `503 account_capacity_reached` | 10,000 active accounts already exist; existing users can still sign in. |
 
-Durable PostgreSQL counters allow 60 challenges, 120 exchanges and 600 account requests per network per UTC hour. Corresponding global limits are 2,000, 4,000 and 20,000. Requests rejected during parsing or authorization still consume admission allowance. A private proxy token authenticates the forwarded address; raw `X-Forwarded-For` is ignored. IPv4-mapped addresses are normalized, and IPv6 addresses share a /64 allowance. These caps bound ordinary abuse and database growth; they do not replace infrastructure protection against denial of service.
+Durable PostgreSQL counters allow 60 challenges, 120 exchanges and 600 account requests per network per UTC hour. Corresponding global limits are 2,000, 4,000 and 20,000. Requests rejected during parsing or authorization still consume admission allowance. Requests already over their network limit keep that network's counter but do not consume shared allowance. A private proxy token authenticates the forwarded address; raw `X-Forwarded-For` is ignored. IPv4-mapped addresses are normalized, and IPv6 addresses share a /64 allowance. Public metadata reads use a separate in-memory limit of 120 requests per network per minute, with HMAC identifiers. These caps bound ordinary abuse and database growth; they do not replace infrastructure protection against denial of service.
 
 ## Stored records and retention
 

@@ -2,6 +2,8 @@
 
 Configure Google or Apple sign-in without enabling hosted conversations, trial minutes or purchases. Users can still practise with their own OpenAI API key without an account. The source defaults to accounts disabled; the current local Mural build enables Google only.
 
+On 12 September 2026, the owner confirmed that real Google sign-in worked on the installed iPhone build. Session persistence, sign-out, expiry and account deletion still need their separate device checks below. Apple remains disabled pending enrollment and revocation setup.
+
 ## Enable Google
 
 1. Deploy the account service using the [server setup guide](../server/docs/enable-accounts.md). Use an HTTPS origin with no path, query, fragment or embedded credentials. Confirm the server's `/v1/auth/providers` response enables Google before distributing a configured app.

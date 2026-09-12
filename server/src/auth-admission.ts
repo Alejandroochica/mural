@@ -32,7 +32,12 @@ export class AuthAdmission {
           VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(operation,scope,identifier,window_start)
           DO UPDATE SET hits=LEAST(auth_rate_limits.hits+1,$6) RETURNING hits`,
         [operation, scope, scope === 'global' ? 'all' : identifier, hour, new Date(hour.getTime() + 2 * 3_600_000), maximum + 1])).rows[0];
-        if (row.hits > maximum) return false;
+        if (row.hits > maximum) {
+          // Rejected requests from one network must not exhaust everyone else's allowance.
+          if (scope === 'network') await sql.query(`UPDATE auth_rate_limits SET hits=hits-1
+            WHERE operation=$1 AND scope='global' AND identifier='all' AND window_start=$2`, [operation, hour]);
+          return false;
+        }
       }
       return true;
     });

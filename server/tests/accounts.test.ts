@@ -47,7 +47,9 @@ test('disabled account routes reject before database access and advertise no sig
   const service = createApp({ db: unavailable, auth: config });
   try {
     for (const [method, url] of [['GET', '/v1/account'], ['GET', '/v1/wallet'], ['POST', '/v1/auth/challenge'],
-      ['POST', '/v1/auth/exchange'], ['POST', '/v1/auth/sign-out'], ['DELETE', '/v1/account']] as const) {
+      ['POST', '/v1/auth/exchange'], ['POST', '/v1/auth/sign-out'], ['DELETE', '/v1/account'],
+      ['GET', '/v1/%61ccount'], ['GET', '/v1/%77allet'], ['POST', '/v1/auth/%63hallenge'],
+      ['POST', '/v1/auth/%65xchange'], ['POST', '/v1/auth/%73ign-out'], ['DELETE', '/v1/%61ccount']] as const) {
       const response = await service.inject({ method, url, ...(method === 'GET' ? {} : { payload: {} }) });
       assert.equal(response.statusCode, 503); assert.equal(response.json().error.code, 'accounts_unavailable');
     }
@@ -58,7 +60,7 @@ test('disabled account routes reject before database access and advertise no sig
 integration('signed Google HTTP signup reads the same profile from PostgreSQL, signs out, signs in again and completely deletes the empty account', async () => {
   const service = app(), subject = randomUUID();
   try {
-    const providers = await service.inject({ method: 'GET', url: '/v1/auth/providers' });
+    const providers = await service.inject({ method: 'GET', url: '/v1/auth/providers', headers });
     assert.deepEqual(providers.json(), { google: true, apple: false });
     async function login() {
       const challenge = await service.inject({ method: 'POST', url: '/v1/auth/challenge', headers, payload: {} });
@@ -203,5 +205,43 @@ integration('the global challenge budget bounds distinct networks and returns a 
     assert.deepEqual(response.json(), { error: { code: 'rate_limit' } });
     assert.equal(Number((await db!.query('SELECT count(*) AS count FROM auth_challenges')).rows[0].count), before);
     assert.equal(Number((await db!.query("SELECT count(*) AS count FROM auth_rate_limits WHERE scope='network'")).rows[0].count), 1);
+  } finally { await service.close(); }
+});
+integration('encoded auth routes share admission limits and reject missing trusted proxy headers before database handlers', async () => {
+  const service = app();
+  try {
+    const before = Number((await db!.query('SELECT count(*) AS count FROM auth_challenges')).rows[0].count);
+    const noProxy = await service.inject({ method: 'POST', url: '/v1/auth/%63hallenge', payload: {} });
+    assert.equal(noProxy.statusCode, 503); assert.equal(noProxy.json().error.code, 'accounts_proxy_not_ready');
+    assert.equal(Number((await db!.query('SELECT count(*) AS count FROM auth_challenges')).rows[0].count), before);
+    const accepted = await service.inject({ method: 'POST', url: '/v1/auth/%63hallenge', headers, payload: {} });
+    assert.equal(accepted.statusCode, 200);
+    await db!.query("UPDATE auth_rate_limits SET hits=60 WHERE operation='challenge' AND scope='network'");
+    for (const url of ['/v1/auth/challenge', '/v1/auth/%63hallenge', '/v1/%61uth/challenge']) {
+      const response = await service.inject({ method: 'POST', url, headers, payload: {} });
+      assert.equal(response.statusCode, 429);
+    }
+    assert.equal(Number((await db!.query('SELECT count(*) AS count FROM auth_challenges')).rows[0].count), before + 1);
+  } finally { await service.close(); }
+});
+integration('concurrent requests rejected by one network cannot consume the last shared challenge allowance', async () => {
+  const admission = new AuthAdmission(db!, admissionConfig);
+  await admission.enter('challenge', headers, '127.0.0.1');
+  await db!.query("UPDATE auth_rate_limits SET hits=60 WHERE operation='challenge' AND scope='network'");
+  await db!.query("UPDATE auth_rate_limits SET hits=1999 WHERE operation='challenge' AND scope='global'");
+  const denied = await Promise.allSettled(Array.from({ length: 32 }, () => admission.enter('challenge', headers, '127.0.0.1')));
+  assert.equal(denied.filter(result => result.status === 'rejected').length, 32);
+  assert.equal((await db!.query("SELECT hits FROM auth_rate_limits WHERE operation='challenge' AND scope='global'")).rows[0].hits, 1999);
+  await admission.enter('challenge', { ...headers, 'x-mural-client-ip': '198.51.100.72' }, '127.0.0.1');
+  assert.equal((await db!.query("SELECT hits FROM auth_rate_limits WHERE operation='challenge' AND scope='global'")).rows[0].hits, 2000);
+});
+integration('public read throttling uses authenticated client networks instead of the shared proxy socket', async () => {
+  const service = app();
+  try {
+    assert.equal((await service.inject({ method: 'GET', url: '/v1/auth/providers' })).statusCode, 503);
+    for (let i = 0; i < 120; i++) assert.equal((await service.inject({ method: 'GET', url: '/v1/auth/providers', headers })).statusCode, 200);
+    assert.equal((await service.inject({ method: 'GET', url: '/v1/auth/providers', headers })).statusCode, 429);
+    const other = await service.inject({ method: 'GET', url: '/v1/auth/providers', headers: { ...headers, 'x-mural-client-ip': '198.51.100.73' } });
+    assert.equal(other.statusCode, 200); assert.deepEqual(other.json(), { google: true, apple: false });
   } finally { await service.close(); }
 });

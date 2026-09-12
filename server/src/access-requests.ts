@@ -87,8 +87,15 @@ export class AccessRequests {
         .update(`${day.toISOString()}\n${address}`).digest('hex');
       // Every request locks global buckets in the same order, so concurrent admissions cannot exceed caps.
       if (await increment(sql, 'global_day', 'all', day, 1000, 48) > 1000) return 'rate';
-      if (await increment(sql, 'global_hour', 'all', hour, 200, 2) > 200) return 'rate';
-      if (await increment(sql, 'ip_hour', identifier, hour, 5, 2) > 5) return 'rate';
+      if (await increment(sql, 'global_hour', 'all', hour, 200, 2) > 200) {
+        await sql.query("UPDATE access_request_limits SET hits=hits-1 WHERE scope='global_day' AND identifier='all' AND window_start=$1", [day]);
+        return 'rate';
+      }
+      if (await increment(sql, 'ip_hour', identifier, hour, 5, 2) > 5) {
+        await sql.query(`UPDATE access_request_limits SET hits=hits-1 WHERE identifier='all' AND
+          ((scope='global_day' AND window_start=$1) OR (scope='global_hour' AND window_start=$2))`, [day, hour]);
+        return 'rate';
+      }
       if (parsed.honeypot) return 'accepted';
       await sql.query("DELETE FROM access_requests WHERE requested_at < now() - interval '12 months'");
       const newCount = (await sql.query("SELECT hits FROM access_request_limits WHERE scope='new_day' AND identifier='all' AND window_start=$1", [day])).rows[0]?.hits ?? 0;

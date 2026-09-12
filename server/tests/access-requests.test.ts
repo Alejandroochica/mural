@@ -133,6 +133,26 @@ integration('simultaneous submissions respect per-address allowance and deduplic
   assert.equal(await count(), 1);
   assert.equal((await db!.query("SELECT hits FROM access_request_limits WHERE scope='new_day'")).rows[0].hits, 1);
 });
+integration('network rejections cannot drain shared waitlist quotas, including concurrent attempts at the last allowance', async () => {
+  const store = new AccessRequests(db!, config);
+  await store.submit(body(), '192.0.2.20');
+  await db!.query("UPDATE access_request_limits SET hits=5 WHERE scope='ip_hour'");
+  await db!.query("UPDATE access_request_limits SET hits=999 WHERE scope='global_day'");
+  await db!.query("UPDATE access_request_limits SET hits=199 WHERE scope='global_hour'");
+  const denied = await Promise.allSettled(Array.from({ length: 32 }, () => store.submit(body(), '192.0.2.20')));
+  assert.equal(denied.filter(result => result.status === 'rejected').length, 32);
+  const counters = (await db!.query("SELECT scope,hits FROM access_request_limits WHERE scope IN ('global_day','global_hour') ORDER BY scope")).rows;
+  assert.deepEqual(counters, [{ scope: 'global_day', hits: 999 }, { scope: 'global_hour', hits: 199 }]);
+  await store.submit(body('other@example.test'), '192.0.2.21');
+  assert.equal(await count(), 2);
+});
+integration('an exhausted waitlist hour does not consume the next hours daily allowance', async () => {
+  const store = new AccessRequests(db!, config);
+  await store.submit(body(), '192.0.2.20');
+  await db!.query("UPDATE access_request_limits SET hits=200 WHERE scope='global_hour'");
+  for (let i = 0; i < 10; i++) await assert.rejects(store.submit(body(), `192.0.2.${30 + i}`), { code: 'access_request_rate_limit' });
+  assert.equal((await db!.query("SELECT hits FROM access_request_limits WHERE scope='global_day'")).rows[0].hits, 1);
+});
 integration('honeypot returns success without storing email and still consumes the abuse budget', async () => {
   const store = new AccessRequests(db!, config);
   await store.submit({ ...body(), website: 'https://spam.test' }, '192.0.2.21');

@@ -160,25 +160,68 @@ public struct Preferences: Codable, Sendable {
 }
 
 public struct Archive: Codable, Sendable {
+    public static let maximumEncodedBytes = 30_000_000
+    private static let maximumSessions = 10_000
     public var schemaVersion = 2
     public var sessions: [SessionRecord] = []
     public var preferences = Preferences()
     public init() {}
     public static func decode(_ data: Data) throws -> Archive {
-        guard data.count <= 30_000_000 else { throw ArchiveError.tooLarge }
+        guard data.count <= maximumEncodedBytes else { throw ArchiveError.tooLarge }
         let migrated = try migrate(data)
         let archive = try JSONDecoder().decode(Archive.self, from: migrated)
-        guard LanguageRegistry.module(for: archive.preferences.learningLanguageID) != nil else { throw ArchiveError.unsupportedLanguage }
-        guard Set(archive.sessions.map(\.id)).count == archive.sessions.count,
-              archive.sessions.count <= 10_000,
-              archive.preferences.sessionMinutes >= 1, archive.preferences.sessionMinutes <= 60 else { throw ArchiveError.invalid }
-        for s in archive.sessions {
-            guard LanguageRegistry.module(for: s.languageID) != nil else { throw ArchiveError.unsupportedLanguage }
-            guard Set(s.fragments.map(\.id)).count == s.fragments.count,
-                  s.fragments.allSatisfy({ $0.startMS >= 0 && $0.endMS >= $0.startMS && $0.text.count <= 50_000 }),
-                  s.topics.allSatisfy({ $0.languageID == s.languageID }) else { throw ArchiveError.invalid }
-        }
+        try archive.validate()
         return archive
+    }
+    /// Bound the selected file before loading it. The read limit also covers growth after the size check.
+    public static func readImportData(from url: URL) throws -> Data {
+        guard url.isFileURL, try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+        else { throw ArchiveError.invalid }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        guard try file.seekToEnd() <= maximumEncodedBytes else { throw ArchiveError.tooLarge }
+        try file.seek(toOffset: 0)
+        var data = Data()
+        while let chunk = try file.read(upToCount: min(65_536, maximumEncodedBytes - data.count + 1)), !chunk.isEmpty {
+            guard chunk.count <= maximumEncodedBytes - data.count else { throw ArchiveError.tooLarge }
+            data.append(chunk)
+        }
+        return data
+    }
+    /// Reject the complete candidate before changing local history, so it remains readable on relaunch.
+    public func merging(_ incoming: Archive) throws -> Archive {
+        try incoming.validate()
+        let known = Set(sessions.map(\.id))
+        let additions = incoming.sessions.filter { !known.contains($0.id) }
+        guard additions.count <= Self.maximumSessions - sessions.count else { throw ArchiveError.tooLarge }
+        var candidate = self
+        for var session in additions {
+            session.invalidateChangedAssessments()
+            session.assessments = session.assessments.compactMap { LearningEngine.validate($0, session: session) }
+            candidate.sessions.append(session)
+        }
+        try candidate.validate()
+        guard try candidate.encoded().count <= Self.maximumEncodedBytes else { throw ArchiveError.tooLarge }
+        return candidate
+    }
+    private func validate() throws {
+        guard LanguageRegistry.module(for: preferences.learningLanguageID) != nil else { throw ArchiveError.unsupportedLanguage }
+        guard Set(sessions.map(\.id)).count == sessions.count,
+              sessions.count <= Self.maximumSessions,
+              preferences.sessionMinutes >= 1, preferences.sessionMinutes <= 60 else { throw ArchiveError.invalid }
+        func validDate(_ date: Date) -> Bool { date >= .distantPast && date <= .distantFuture }
+        for s in sessions {
+            guard LanguageRegistry.module(for: s.languageID) != nil else { throw ArchiveError.unsupportedLanguage }
+            // These generous limits exceed a normal session while keeping UI conversions and totals safe.
+            guard s.voiceSeconds.isFinite, (0...31_536_000).contains(s.voiceSeconds),
+                  [s.inputTokens, s.outputTokens, s.searchCalls].allSatisfy({ (0...1_000_000_000).contains($0) }),
+                  validDate(s.startedAt), s.endedAt.map(validDate) ?? true,
+                  s.assessments.allSatisfy({ validDate($0.createdAt) }) else { throw ArchiveError.invalid }
+            guard Set(s.fragments.map(\.id)).count == s.fragments.count,
+                  s.fragments.allSatisfy({ $0.startMS >= 0 && $0.endMS >= $0.startMS && $0.text.count <= 50_000 &&
+                      (0...1_000_000).contains($0.revision) && validDate($0.receivedAt) }),
+                  s.topics.allSatisfy({ $0.languageID == s.languageID && validDate($0.retrievedAt) }) else { throw ArchiveError.invalid }
+        }
     }
     /// Version 1 was Norwegian-only. Migration assigns that provenance once;
     /// version 2 records must explicitly declare their language.

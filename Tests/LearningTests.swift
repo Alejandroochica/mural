@@ -99,6 +99,65 @@ final class LearningTests: XCTestCase {
         var archive = Archive(); let s = fixture(); archive.sessions = [s,s]
         XCTAssertThrowsError(try Archive.decode(archive.encoded()))
     }
+    func testArchiveRejectsNumbersThatCanCrashTheInterface() throws {
+        var archive = Archive(); archive.sessions = [fixture()]
+        archive.sessions[0].voiceSeconds = 1e308
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+        archive.sessions[0].voiceSeconds = 0
+        archive.sessions[0].searchCalls = Int.max
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+        archive.sessions[0].searchCalls = 0
+        archive.sessions[0].fragments[0].revision = Int.max
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+        archive.sessions[0].fragments[0].revision = 0
+        archive.sessions[0].inputTokens = -1
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+        archive.sessions[0].inputTokens = 0
+        archive.sessions[0].assessments[0].createdAt = Date(timeIntervalSinceReferenceDate: 1e308)
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+    }
+    func testImportFileReadRejectsOversizedAndNonFileInputs() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try Archive().encoded()
+        try expected.write(to: url)
+        XCTAssertEqual(try Archive.readImportData(from: url), expected)
+        let file = try FileHandle(forWritingTo: url)
+        try file.truncate(atOffset: UInt64(Archive.maximumEncodedBytes) + 1)
+        try file.close()
+        XCTAssertThrowsError(try Archive.readImportData(from: url)) { XCTAssertEqual($0 as? ArchiveError, .tooLarge) }
+        XCTAssertThrowsError(try Archive.readImportData(from: URL(string: "https://example.test/backup.json")!))
+        XCTAssertThrowsError(try Archive.readImportData(from: FileManager.default.temporaryDirectory))
+    }
+    func testImportMergeCannotPersistAnArchiveThatFailsOnRelaunch() throws {
+        var original = Archive(), incoming = Archive()
+        original.sessions = (0..<10_000).map { _ in SessionRecord() }
+        incoming.sessions = [SessionRecord()]
+        XCTAssertThrowsError(try original.merging(incoming)) { XCTAssertEqual($0 as? ArchiveError, .tooLarge) }
+        XCTAssertEqual(original.sessions.count, 10_000)
+        incoming.sessions = [original.sessions[0]]
+        XCTAssertEqual(try original.merging(incoming).sessions.count, 10_000)
+        original.sessions = [SessionRecord(title: String(repeating: "a", count: Archive.maximumEncodedBytes / 2))]
+        incoming.sessions = [SessionRecord(title: String(repeating: "b", count: Archive.maximumEncodedBytes / 2))]
+        XCTAssertNoThrow(try Archive.decode(original.encoded()))
+        XCTAssertNoThrow(try Archive.decode(incoming.encoded()))
+        XCTAssertThrowsError(try original.merging(incoming)) { XCTAssertEqual($0 as? ArchiveError, .tooLarge) }
+        XCTAssertEqual(original.sessions.count, 1)
+    }
+    func testImportMergePreservesLocalPreferencesAndValidatesNewEvidence() throws {
+        var original = Archive(), incoming = Archive()
+        original.preferences.meaningLanguage = "Spanish"
+        original.preferences.aiConsentVersion = 1
+        incoming.preferences.meaningLanguage = "English"
+        var invalidEvidence = fixture()
+        invalidEvidence.assessments[0].revisionKey = "changed"
+        incoming.sessions = [invalidEvidence]
+        let merged = try original.merging(incoming)
+        XCTAssertEqual(merged.preferences.meaningLanguage, "Spanish")
+        XCTAssertEqual(merged.preferences.aiConsentVersion, 1)
+        XCTAssertTrue(merged.sessions[0].assessments.isEmpty)
+        XCTAssertEqual(try Archive.decode(merged.encoded()).sessions.count, 1)
+    }
     func testSourceLinksRejectNonHTTPSAndCredentials() {
         XCTAssertNil(SourceLink(title: "bad", url: "javascript:alert(1)").safeURL)
         XCTAssertNil(SourceLink(title: "bad", url: "https://user@example.com/page").safeURL)
