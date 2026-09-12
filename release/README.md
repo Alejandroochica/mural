@@ -4,8 +4,8 @@
 
 ## Completed
 
-- [x] Publish [the iPhone app repository](https://github.com/Chuloo/mural) under MIT. The documentation release `d0b3bb5` passed CI.
-- [x] Publish [the separate website repository](https://github.com/Chuloo/mural-website), at `ccdcc66`, and make [mural.chat](https://mural.chat/) available over HTTPS.
+- [x] Publish [the iPhone app repository](https://github.com/Chuloo/mural) under MIT. Verified commit `f2f1a78` passed the Swift core and server CI jobs; native iOS build and UI checks are recorded separately below.
+- [x] Publish [the separate website repository](https://github.com/Chuloo/mural-website), including verified commit `5f348b3`, and make [mural.chat](https://mural.chat/) available over HTTPS.
 - [x] Verify the privacy, terms and support pages on the custom domain return HTTP 200 without login. Confirm the operator as **Hackmamba Inc., incorporated in the United States**, with support at hi@hackmamba.io.
 - [x] Implement Norwegian, Spanish, English and French modules, language/subtitle onboarding, versioned AI consent, local backups and the existing conversation controls.
 - [x] Pass 48 core tests and the 11-test language/onboarding UI suite. The latter ran before account integration; a later onboarding check compiled the combined source. See [the verification record](../verification/validation.md) for the tested builds and limits.
@@ -40,7 +40,9 @@ Use [the Apple release checklist](apple-release.md) for the upload sequence and 
 
 These items do not block a correctly disclosed BYOK build. They do block promising free minutes, accounts or purchased credits to users.
 
-- [ ] Deploy the server and database with restricted runtime privileges, secret storage, financial backups, recovery and operational alerts. No production account or payment service is running.
+- [x] Deploy the gated API foundation, PostgreSQL and HTTPS proxy with separate migration and restricted runtime database roles. Public health, readiness and pricing checks pass. Commercial routes return `503 commercial_features_not_ready`; provider credentials have not been deployed, and account creation, trial, checkout and hosted voice remain unavailable.
+- [x] Configure daily encrypted local database backups and verify one backup by restoring it into a separate temporary database. The first encrypted copy was also retained off the server.
+- [ ] Configure recurring encrypted off-server backup storage, verify scheduled recovery and add operational alerts without conversation content. A daily local backup and one off-server copy do not complete this work.
 - [ ] Configure Google’s native OAuth client and Apple’s identity credentials/capability. Verify sign-in, secure session restore, expiry, sign-out and Apple authorization revocation on a real device. Complete deletion with unresolved balances/payments and recovery after device loss.
 - [ ] Verify the hosted voice adapter against a bounded real provider call, including cutoff, hangup, final usage, network failure and reconciliation. Implement budgets for hosted teaching, subtitles and search.
 - [ ] Implement App Attest/DeviceCheck verification, durable trial claims, the ten-minute allowance and a global free-use budget. The current trial attestor rejects requests.

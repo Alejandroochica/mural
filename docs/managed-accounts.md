@@ -22,7 +22,7 @@ Do these steps only after the server and both identity providers are configured.
 | `MuralGoogleClientID` | The iOS OAuth client ID |
 | `MuralAppleClientID` | The app's bundle ID |
 
-7. Regenerate the Xcode project to include the new Swift files, then add `ManagedAccountView()` as a Settings navigation destination when `ManagedAccountConfiguration.load()` succeeds. Do not make it a prerequisite for BYOK conversations.
+7. Build with the configured target and verify the existing Account destination in Settings. It appears when `ManagedAccountConfiguration.load()` succeeds. BYOK conversations remain available without an account.
 
 Client IDs are public configuration. Google or Apple client secrets, signing keys, OpenAI service keys and database credentials belong only on the server. Do not place them in Info.plist or an app resource.
 

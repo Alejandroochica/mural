@@ -36,7 +36,7 @@ Publish from the directory containing `Package.swift`, keeping the following rel
 
 Exclude `.build/`, `DerivedData/`, `.swiftpm/` workspace state, Xcode user data, all local credentials and signing profiles, `Config/Local.xcconfig`, raw verification JSON/logs, compiled archives, exports of learning data, the duplicate marketing ZIP, and editor/system files. Keep the historical `plan/` drafts local for the first release; they describe earlier personal-build assumptions.
 
-Website source and assets belong in the separate [Chuloo/mural-website repository](https://github.com/Chuloo/mural-website), which is being prepared independently. They are outside the app repository’s publication scope.
+Website source and assets are published in the separate [Chuloo/mural-website repository](https://github.com/Chuloo/mural-website) and deployed at [mural.chat](https://mural.chat). They are outside the app repository’s publication scope.
 
 ## Publication checks
 
