@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://mural-language.williamimoh.chatgpt.site/sitemap.xml

@@ -1,0 +1,125 @@
+import Fastify, { type FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import type { Database } from './db.js';
+import { authenticate, createChallenge, deleteAccount, exchangeIdentity, type AppleRevoker, type AuthConfig } from './auth.js';
+import { ServiceError } from './errors.js';
+import { applyStripeEvent, type SandboxPayments } from './payments.js';
+import { RATE_VERSION } from './pricing.js';
+import { trialEligibility, UnconfiguredAttestor, type TrialAttestor } from './trial.js';
+import type { HostedVoice } from './hosted-voice.js';
+
+export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice }
+const objectBody = (request: FastifyRequest): Record<string, unknown> => {
+  if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Buffer.isBuffer(request.body)) throw new ServiceError('invalid_request');
+  return request.body as Record<string, unknown>;
+};
+const stringField = (body: Record<string, unknown>, field: string, max = 1024) => {
+  const value = body[field];
+  if (typeof value !== 'string' || !value || value.length > max) throw new ServiceError('invalid_request');
+  return value;
+};
+const uuid = (text: string) => {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(text)) throw new ServiceError('invalid_request');
+  return text;
+};
+
+export function createApp(services: Services) {
+  const { db } = services;
+  const app = Fastify({ logger: false, bodyLimit: 262_144,
+    requestTimeout: 15_000, trustProxy: false, genReqId: () => randomUUID() });
+  // No request bodies, Authorization headers, tokens, transcripts, or Stripe payloads are logged.
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
+    if (request.url.split('?')[0] === '/v1/webhooks/stripe') return done(null, body);
+    try { done(null, JSON.parse(body.toString())); } catch { done(new ServiceError('invalid_json')); }
+  });
+  const windows = new Map<string, { until: number; count: number }>();
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
+    if (request.url === '/healthz') return;
+    const now = Date.now();
+    if (windows.size > 10_000) for (const [key, value] of windows) if (value.until < now) windows.delete(key);
+    let slot = windows.get(request.ip);
+    if (!slot || slot.until < now) {
+      if (windows.size >= 20_000) throw new ServiceError('rate_limit', 429);
+      slot = { until: now + 60_000, count: 0 }; windows.set(request.ip, slot);
+    }
+    if (++slot.count > 120) throw new ServiceError('rate_limit', 429);
+  });
+  app.setErrorHandler((error, _request, reply) => {
+    const candidate = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : null;
+    const status = error instanceof ServiceError ? error.status : typeof candidate === 'number' && candidate >= 400 && candidate < 500 ? candidate : 500;
+    const code = error instanceof ServiceError ? error.code : status < 500 ? 'invalid_request' : 'service_unavailable';
+    reply.code(status).send({ error: { code } });
+  });
+  app.get('/healthz', async () => ({ ok: true, stage: 'commercial-foundation', hostedVoice: false, livePayments: false }));
+  app.get('/readyz', async () => {
+    await db.query('SELECT 1'); return { database: true, hostedVoice: false, livePayments: false };
+  });
+  app.get('/v1/pricing', async () => ({ currency: 'USD', rateVersion: RATE_VERSION, moneyUnit: 'nanoUSD',
+    nanoUSDPerDollar: '1000000000', creditNanoUSD: '10000000', serviceFeePercent: 15,
+    voice: { model: 'gpt-live-1', perMinuteNanoUSD: '50000000', billingUnit: 'active-session-seconds' },
+    text: { model: 'gpt-5.6-luna', inputPerTokenNanoUSD: '200', cachedInputPerTokenNanoUSD: '20', outputPerTokenNanoUSD: '1200' },
+    searchPerCallNanoUSD: '10000000', paymentFees: 'quoted separately at checkout', hostedVoiceAvailable: false }));
+  app.post('/v1/auth/challenge', async () => createChallenge(db));
+  app.post('/v1/auth/exchange', async request => {
+    const body = objectBody(request), provider = stringField(body, 'provider', 10);
+    if (provider !== 'google' && provider !== 'apple') throw new ServiceError('invalid_identity_provider');
+    // Apple account creation cannot be enabled before account deletion can revoke Apple authorization.
+    if (provider === 'apple' && !services.appleRevoker) throw new ServiceError('apple_sign_in_not_ready', 503);
+    return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth);
+  });
+  app.get('/v1/wallet', async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    const wallet = (await db.query('SELECT balance_nano,reserved_nano FROM wallets WHERE account_id=$1', [account])).rows[0];
+    return { currency: 'USD', balanceNanoUSD: wallet.balance_nano, reservedNanoUSD: wallet.reserved_nano,
+      availableNanoUSD: (BigInt(wallet.balance_nano) - BigInt(wallet.reserved_nano)).toString() };
+  });
+  app.post('/v1/auth/sign-out', async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    await db.query('UPDATE auth_sessions SET revoked_at=now() WHERE account_id=$1', [account]);
+    return { signedOut: true };
+  });
+  app.delete('/v1/account', async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    const code = request.body && typeof request.body === 'object' && 'appleAuthorizationCode' in request.body && typeof request.body.appleAuthorizationCode === 'string'
+      ? request.body.appleAuthorizationCode : undefined;
+    await deleteAccount(db, account, services.appleRevoker, code);
+    return { deleted: true, retained: 'Only required financial records, linked to an opaque account ID.' };
+  });
+  app.post('/v1/checkout', async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    if (!services.payments) throw new ServiceError('checkout_not_configured', 503);
+    const key = request.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.length < 8 || key.length > 128) throw new ServiceError('idempotency_key_required');
+    return services.payments.checkout(db, account, stringField(objectBody(request), 'product', 64), key);
+  });
+  app.post('/v1/webhooks/stripe', async request => {
+    if (!services.payments) throw new ServiceError('checkout_not_configured', 503);
+    const signature = request.headers['stripe-signature'];
+    if (!Buffer.isBuffer(request.body) || typeof signature !== 'string') throw new ServiceError('invalid_webhook_signature');
+    const event = services.payments.verify(request.body, signature);
+    await applyStripeEvent(db, event);
+    return { received: true };
+  });
+  app.post('/v1/trial/eligibility', async request => trialEligibility(db, request.body, services.attestor ?? new UnconfiguredAttestor()));
+  app.post('/v1/live/sessions', async request => {
+    if (!services.hosted?.available) throw new ServiceError('hosted_voice_not_ready', 503);
+    const account = await authenticate(db, request.headers.authorization), body = objectBody(request);
+    const key = request.headers['idempotency-key'];
+    if (typeof key !== 'string') throw new ServiceError('idempotency_key_required');
+    return services.hosted.create(account, key, stringField(body, 'sdp', 65_536), stringField(body, 'language', 10));
+  });
+  app.get('/v1/live/sessions/:id', async request => {
+    if (!services.hosted) throw new ServiceError('hosted_voice_not_ready', 503);
+    const account = await authenticate(db, request.headers.authorization);
+    return services.hosted.status(account, uuid((request.params as { id: string }).id));
+  });
+  app.post('/v1/live/sessions/:id/close', async request => {
+    if (!services.hosted) throw new ServiceError('hosted_voice_not_ready', 503);
+    const account = await authenticate(db, request.headers.authorization);
+    return services.hosted.close(account, uuid((request.params as { id: string }).id));
+  });
+  app.get('/payment-return', async (_request, reply) => reply.type('text/html').send('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Mural sandbox</title><body><h1>Return to Mural</h1><p>This is a sandbox payment test. The app checks payment confirmation independently.</p></body></html>'));
+  return app;
+}

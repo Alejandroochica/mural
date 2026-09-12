@@ -1,0 +1,2 @@
+// The optional file keeps personal signing settings out of the public project.
+#include? "Local.xcconfig"

@@ -1,0 +1,108 @@
+import XCTest
+@testable import MuralCore
+
+final class LearningTests: XCTestCase {
+    func fixture(day: Double = 0, theme: String = "walk", supported: Bool = false, kind: EvidenceKind = .independent) -> SessionRecord {
+        let date = Date(timeIntervalSince1970: 1_780_000_000 + day * 86400)
+        var s = SessionRecord(themeID: theme)
+        s.startedAt = date
+        s.append(Fragment(id: UUID().uuidString, speaker: .user, text: "Jeg gikk i skogen.", startMS: 1000, endMS: 2000, receivedAt: date, meaningVisible: supported))
+        let p = s.passages[0]
+        s.assessments = [Assessment(passageID: p.id, revisionKey: p.revisionKey, outcome: .success, suggestedLevel: 2, nextGoal: "Fortell mer.", capability: "Describes a past outing", words: [WordProposal(lemma: "å gå", meaning: "to go", form: "gikk", kind: kind, confidence: 0.95, sourceIDs: p.fragments.map(\.id), quote: "Jeg gikk i skogen.")], createdAt: date, context: theme)]
+        return s
+    }
+    func testDuplicateProviderEventsDoNotChangeTranscript() {
+        var s = SessionRecord()
+        let f = Fragment(id: "same", speaker: .user, text: "Hei", startMS: 0, endMS: 100)
+        s.append(f); s.append(f)
+        XCTAssertEqual(s.fragments.count, 1)
+    }
+    func testConcatenationPreservesExactProviderWhitespace() {
+        let f = [Fragment(id: "a", speaker: .assistant, text: "Hva", startMS: 0, endMS: 100), Fragment(id: "b", speaker: .assistant, text: " gjorde du?", startMS: 100, endMS: 400)]
+        XCTAssertEqual(Transcript.passages(f).first?.text, "Hva gjorde du?")
+    }
+    func testLateFragmentsRebuildEarlierPassageAndInvalidateEvidence() {
+        var s = fixture()
+        s.append(Fragment(id: "late", speaker: .user, text: " kanskje", startMS: 2100, endMS: 2500))
+        XCTAssertEqual(s.assessments.count, 0)
+        XCTAssertEqual(s.passages.count, 1)
+    }
+    func testOverlappingSpeakersRemainSeparate() {
+        let fragments = [Fragment(speaker: .assistant, text: "Hei", startMS: 0, endMS: 500), Fragment(speaker: .user, text: "Hallo", startMS: 100, endMS: 400), Fragment(speaker: .assistant, text: "!", startMS: 500, endMS: 600)]
+        let p = Transcript.passages(fragments)
+        XCTAssertEqual(p.count, 2); XCTAssertEqual(p[0].text, "Hei!"); XCTAssertEqual(p[1].text, "Hallo")
+    }
+    func testVisibleMeaningCannotAwardIndependentRecall() {
+        let s = fixture(supported: true)
+        let valid = LearningEngine.validate(s.assessments[0], session: s)
+        XCTAssertEqual(valid?.words[0].kind, .assisted)
+        XCTAssertEqual(LearningEngine.project([s]).words[0].independentCount, 0)
+    }
+    func testImmediateImitationIsAssisted() {
+        var s = fixture()
+        s.fragments.insert(Fragment(speaker: .assistant, text: "Du gikk en tur?", startMS: 0, endMS: 500), at: 0)
+        XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words[0].kind, .assisted)
+    }
+    func testEnglishCannotAwardNorwegianProduction() {
+        var s = fixture(); s.assessments[0].words[0].language = "en"
+        XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words.count, 0)
+    }
+    func testTypingCannotAwardIndependentSpokenRecall() {
+        var s = fixture(); s.fragments[0].typed = true
+        XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words[0].kind, .assisted)
+    }
+    func testFabricatedSourceAndQuotesAreRejected() {
+        var s = fixture(); s.assessments[0].words[0].sourceIDs = ["invented"]
+        XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words.count, 0)
+        s = fixture(); s.assessments[0].words[0].quote = "Jeg kan fly."
+        XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words.count, 0)
+    }
+    func testDuplicateAssessmentsNeverDoubleCredit() {
+        var s = fixture(); s.assessments += s.assessments
+        let projection = LearningEngine.project([s], now: s.startedAt)
+        XCTAssertEqual(projection.words[0].independentCount, 1)
+        XCTAssertEqual(projection.observationCount, 1)
+    }
+    func testDuplicateWordProposalsNeverDoubleCredit() {
+        var s = fixture(); s.assessments[0].words += s.assessments[0].words
+        XCTAssertEqual(LearningEngine.project([s], now: s.startedAt).words[0].independentCount, 1)
+    }
+    func testSteadyRequiresSpacingAndDifferentContexts() {
+        let first = fixture(), second = fixture(day: 2), third = fixture(day: 8, theme: "dinner")
+        let p = LearningEngine.project([first, second, third], now: third.startedAt)
+        XCTAssertEqual(p.words[0].bars, 3)
+        let sameContext = LearningEngine.project([first, second, fixture(day: 8)], now: third.startedAt)
+        XCTAssertEqual(sameContext.words[0].bars, 2)
+        let massed = LearningEngine.project([first, fixture(day: 0.01), fixture(day: 0.02)], now: first.startedAt)
+        XCTAssertLessThanOrEqual(massed.words[0].bars, 2)
+    }
+    func testStrengthFadesAndLapsesLowerIt() {
+        let sessions = [fixture(), fixture(day: 2), fixture(day: 8, theme: "dinner")]
+        let projected = LearningEngine.project(sessions, now: sessions.last!.startedAt.addingTimeInterval(30 * 86400))
+        XCTAssertEqual(projected.words[0].bars, 2)
+        let lapse = fixture(day: 9, kind: .lapse)
+        XCTAssertEqual(LearningEngine.project(sessions + [lapse], now: lapse.startedAt).words[0].bars, 1)
+    }
+    func testCorrectedTranscriptRevokesEvidence() {
+        var s = fixture(); s.correctFragment(id: s.fragments[0].id, text: "I went for a walk.")
+        XCTAssertTrue(s.assessments.isEmpty)
+        XCTAssertTrue(LearningEngine.project([s]).words.isEmpty)
+    }
+    func testArchiveRoundTripAndVersionGuard() throws {
+        var archive = Archive(); archive.sessions = [fixture()]
+        let decoded = try Archive.decode(archive.encoded())
+        XCTAssertEqual(decoded.sessions.count, 1)
+        archive.schemaVersion = 99
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+    }
+    func testDuplicateSessionImportRejected() throws {
+        var archive = Archive(); let s = fixture(); archive.sessions = [s,s]
+        XCTAssertThrowsError(try Archive.decode(archive.encoded()))
+    }
+    func testSourceLinksRejectNonHTTPSAndCredentials() {
+        XCTAssertNil(SourceLink(title: "bad", url: "javascript:alert(1)").safeURL)
+        XCTAssertNil(SourceLink(title: "bad", url: "https://user@example.com/page").safeURL)
+        XCTAssertNotNil(SourceLink(title: "good", url: "https://www.nrk.no/").safeURL)
+    }
+    func testTwentyFourDistinctThemes() { XCTAssertEqual(Set(LanguageModule.norwegian.themes.map(\.id)).count, 24) }
+}
