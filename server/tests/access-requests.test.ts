@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createApp } from '../src/app.js';
 import { connectDatabase } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
-import { AccessRequests, accessRequestConfig, normalizeAccessEmail, pruneAccessRequests, deleteAccessRequest } from '../src/access-requests.js';
+import { AccessRequests, ACCESS_REQUEST_LIMITS as limits, accessRequestConfig, normalizeAccessEmail, pruneAccessRequests, deleteAccessRequest } from '../src/access-requests.js';
 import { exportAccessRequests } from '../src/access-requests-admin.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -137,19 +137,19 @@ integration('network rejections cannot drain shared waitlist quotas, including c
   const store = new AccessRequests(db!, config);
   await store.submit(body(), '192.0.2.20');
   await db!.query("UPDATE access_request_limits SET hits=5 WHERE scope='ip_hour'");
-  await db!.query("UPDATE access_request_limits SET hits=999 WHERE scope='global_day'");
-  await db!.query("UPDATE access_request_limits SET hits=199 WHERE scope='global_hour'");
+  await db!.query("UPDATE access_request_limits SET hits=$1 WHERE scope='global_day'", [limits.requestsDaily - 1]);
+  await db!.query("UPDATE access_request_limits SET hits=$1 WHERE scope='global_hour'", [limits.requestsHourly - 1]);
   const denied = await Promise.allSettled(Array.from({ length: 32 }, () => store.submit(body(), '192.0.2.20')));
   assert.equal(denied.filter(result => result.status === 'rejected').length, 32);
   const counters = (await db!.query("SELECT scope,hits FROM access_request_limits WHERE scope IN ('global_day','global_hour') ORDER BY scope")).rows;
-  assert.deepEqual(counters, [{ scope: 'global_day', hits: 999 }, { scope: 'global_hour', hits: 199 }]);
+  assert.deepEqual(counters, [{ scope: 'global_day', hits: limits.requestsDaily - 1 }, { scope: 'global_hour', hits: limits.requestsHourly - 1 }]);
   await store.submit(body('other@example.test'), '192.0.2.21');
   assert.equal(await count(), 2);
 });
 integration('an exhausted waitlist hour does not consume the next hours daily allowance', async () => {
   const store = new AccessRequests(db!, config);
   await store.submit(body(), '192.0.2.20');
-  await db!.query("UPDATE access_request_limits SET hits=200 WHERE scope='global_hour'");
+  await db!.query("UPDATE access_request_limits SET hits=$1 WHERE scope='global_hour'", [limits.requestsHourly]);
   for (let i = 0; i < 10; i++) await assert.rejects(store.submit(body(), `192.0.2.${30 + i}`), { code: 'access_request_rate_limit' });
   assert.equal((await db!.query("SELECT hits FROM access_request_limits WHERE scope='global_day'")).rows[0].hits, 1);
 });
@@ -162,19 +162,33 @@ integration('honeypot returns success without storing email and still consumes t
 integration('global request and daily signup caps stop distinct addresses without leaking existing membership', async () => {
   const store = new AccessRequests(db!, config);
   await store.submit(body(), '192.0.2.22');
-  await db!.query("UPDATE access_request_limits SET hits=1000 WHERE scope='global_day'");
+  await db!.query("UPDATE access_request_limits SET hits=$1 WHERE scope='global_day'", [limits.requestsDaily]);
   await assert.rejects(store.submit(body('new@example.test'), '192.0.2.23'), { code: 'access_request_rate_limit' });
   await db!.query("UPDATE access_request_limits SET hits=0 WHERE scope='global_day'");
-  await db!.query("UPDATE access_request_limits SET hits=500 WHERE scope='new_day'");
+  await db!.query("UPDATE access_request_limits SET hits=$1 WHERE scope='new_day'", [limits.newAddressesDaily]);
   for (const email of ['learner@example.test', 'new@example.test'])
     await assert.rejects(store.submit(body(email), '192.0.2.24'), { code: 'access_requests_full' });
   assert.equal(await count(), 1);
 });
 integration('storage cap remains bounded under concurrent requests', async () => {
-  await db!.query("INSERT INTO access_requests(email,consent_version,source) SELECT 'seed'||n||'@example.test','waitlist-v1','website' FROM generate_series(1,9999) n");
+  assert.equal(limits.retainedAddresses, 100_000);
+  await db!.query("INSERT INTO access_requests(email,consent_version,source) SELECT 'seed'||n||'@example.test','waitlist-v1','website' FROM generate_series(1,$1::integer) n", [limits.retainedAddresses - 1]);
   const store = new AccessRequests(db!, config);
   const results = await Promise.allSettled([store.submit(body('last@example.test'), '192.0.2.25'), store.submit(body('extra@example.test'), '192.0.2.26')]);
-  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1); assert.equal(await count(), 10_000);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1); assert.equal(await count(), limits.retainedAddresses);
+});
+integration('launch traffic above the old daily and hourly limits can still join without resetting counters', async () => {
+  const service = app();
+  try {
+    await new AccessRequests(db!, config).submit(body(), '192.0.2.50');
+    await db!.query("UPDATE access_request_limits SET hits=500 WHERE scope='new_day'");
+    await db!.query("UPDATE access_request_limits SET hits=1001 WHERE scope='global_day'");
+    await db!.query("UPDATE access_request_limits SET hits=201 WHERE scope='global_hour'");
+    const response = await service.inject({ method: 'POST', url: '/v1/access-requests', headers: headers('192.0.2.51'), payload: body('launch@example.test') });
+    assert.equal(response.statusCode, 202); assert.deepEqual(response.json(), { accepted: true });
+    assert.equal(await count(), 2);
+    assert.equal((await db!.query("SELECT hits FROM access_request_limits WHERE scope='new_day'")).rows[0].hits, 501);
+  } finally { await service.close(); }
 });
 integration('private export excludes expired rows, protects file permissions, and deletion and pruning are idempotent', async () => {
   const store = new AccessRequests(db!, config), dir = await mkdtemp(join(tmpdir(), 'mural-access-test-'));

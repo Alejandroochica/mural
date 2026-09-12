@@ -7,6 +7,11 @@ import { ServiceError } from './errors.js';
 
 export const ACCESS_REQUEST_PATH = '/v1/access-requests';
 export const ACCESS_CONSENT_VERSION = 'waitlist-v1';
+// Signup capacity must accommodate a public launch without one visitor consuming shared capacity.
+export const ACCESS_REQUEST_LIMITS = Object.freeze({
+  networkHourly: 5, requestsHourly: 100_000, requestsDaily: 200_000,
+  newAddressesDaily: 100_000, retainedAddresses: 100_000
+});
 export interface AccessRequestConfig { hmacKey: string; proxyToken: string; localOrigin?: string }
 export function accessRequestConfig(env: NodeJS.ProcessEnv): AccessRequestConfig | undefined {
   if (env.ACCESS_REQUESTS_ENABLED !== 'true') return undefined;
@@ -86,12 +91,12 @@ export class AccessRequests {
       const identifier = createHmac('sha256', Buffer.from(this.config.hmacKey, 'hex'))
         .update(`${day.toISOString()}\n${address}`).digest('hex');
       // Every request locks global buckets in the same order, so concurrent admissions cannot exceed caps.
-      if (await increment(sql, 'global_day', 'all', day, 1000, 48) > 1000) return 'rate';
-      if (await increment(sql, 'global_hour', 'all', hour, 200, 2) > 200) {
+      if (await increment(sql, 'global_day', 'all', day, ACCESS_REQUEST_LIMITS.requestsDaily, 48) > ACCESS_REQUEST_LIMITS.requestsDaily) return 'rate';
+      if (await increment(sql, 'global_hour', 'all', hour, ACCESS_REQUEST_LIMITS.requestsHourly, 2) > ACCESS_REQUEST_LIMITS.requestsHourly) {
         await sql.query("UPDATE access_request_limits SET hits=hits-1 WHERE scope='global_day' AND identifier='all' AND window_start=$1", [day]);
         return 'rate';
       }
-      if (await increment(sql, 'ip_hour', identifier, hour, 5, 2) > 5) {
+      if (await increment(sql, 'ip_hour', identifier, hour, ACCESS_REQUEST_LIMITS.networkHourly, 2) > ACCESS_REQUEST_LIMITS.networkHourly) {
         await sql.query(`UPDATE access_request_limits SET hits=hits-1 WHERE identifier='all' AND
           ((scope='global_day' AND window_start=$1) OR (scope='global_hour' AND window_start=$2))`, [day, hour]);
         return 'rate';
@@ -101,9 +106,9 @@ export class AccessRequests {
       const newCount = (await sql.query("SELECT hits FROM access_request_limits WHERE scope='new_day' AND identifier='all' AND window_start=$1", [day])).rows[0]?.hits ?? 0;
       const count = Number((await sql.query('SELECT count(*) AS count FROM access_requests')).rows[0].count);
       // At capacity, return the same failure for new and existing emails to avoid disclosing membership.
-      if (newCount >= 500 || count >= 10_000) return 'capacity';
+      if (newCount >= ACCESS_REQUEST_LIMITS.newAddressesDaily || count >= ACCESS_REQUEST_LIMITS.retainedAddresses) return 'capacity';
       const previous = (await sql.query('SELECT 1 FROM access_requests WHERE email=$1', [parsed.email])).rowCount;
-      if (!previous) await increment(sql, 'new_day', 'all', day, 500, 48);
+      if (!previous) await increment(sql, 'new_day', 'all', day, ACCESS_REQUEST_LIMITS.newAddressesDaily, 48);
       await sql.query(`INSERT INTO access_requests(email,requested_at,consent_version,source) VALUES($1,now(),$2,'website')
         ON CONFLICT(email) DO UPDATE SET requested_at=now()`, [parsed.email, ACCESS_CONSENT_VERSION]);
       return 'accepted';
