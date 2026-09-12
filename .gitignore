@@ -25,6 +25,7 @@ site/.openai/hosting.json
 plan/
 verification/*.json
 marketing/screenshots/*.zip
+marketing/demo/
 .swiftpm/
 node_modules/
 __pycache__/

@@ -40,6 +40,10 @@ extension AudioVerification {
         let wasIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
         UIApplication.shared.isIdleTimerDisabled = true
         defer { UIApplication.shared.isIdleTimerDisabled = wasIdleTimerDisabled }
+        if ProcessInfo.processInfo.arguments.contains("--record-spanish-demo") {
+            await recordSpanishDemo(coordinator)
+            return
+        }
         if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--verify-language=") }) {
             let id = String(argument.dropFirst("--verify-language=".count))
             guard LanguageRegistry.module(for: id) != nil else { return }
@@ -101,6 +105,52 @@ extension AudioVerification {
             if !result.connected || !result.closed || Task.isCancelled { break }
         }
         write(status: "complete", results: results)
+    }
+
+    // Explicit recording helper: real provider responses to two scripted typed
+    // turns. It never changes the owner's learning record or exports their key.
+    @MainActor private static func recordSpanishDemo(_ coordinator: ConversationCoordinator) async {
+        coordinator.selectLanguage("es")
+        coordinator.selectMeaningLanguage("English")
+        coordinator.chooseTheme(ConversationTheme.shared.first { $0.id == "coffee" })
+        coordinator.store.updatePreferences { $0.meaningVisible = true }
+        let destination = URL.documentsDirectory.appendingPathComponent("demo-verification.json")
+        func report(_ status: String, replies: Int = 0) {
+            let data = try? JSONEncoder().encode(["status": status, "replies": String(replies), "input": "scripted typed turns", "output": "live provider audio"])
+            try? data?.write(to: destination, options: .atomic)
+        }
+        report("ready")
+        do { try await Task.sleep(for: .seconds(30)) } catch { return }
+        coordinator.start()
+        defer { coordinator.end(reason: "Spanish recording demo") }
+        let connectionDeadline = Date().addingTimeInterval(45)
+        while coordinator.state == .connecting && Date() < connectionDeadline {
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { coordinator.end(reason: "Demo cancelled"); return }
+        }
+        guard coordinator.state == .active else { report("connection failed"); return }
+        coordinator.toggleMute()
+        let absoluteDeadline = Date().addingTimeInterval(100)
+        func waitForReply(after previous: String) async -> Bool {
+            var lastChange = Date(), previousText = previous
+            while coordinator.state == .active && Date() < absoluteDeadline && !Task.isCancelled {
+                let current = coordinator.caption
+                if current != previousText || coordinator.outputLevel > 0.01 { lastChange = .now; previousText = current }
+                if current != previous, coordinator.assistantPassage != nil, !coordinator.working,
+                   Date().timeIntervalSince(lastChange) > 3 { return true }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+            }
+            return false
+        }
+        var replies = 0
+        if await waitForReply(after: coordinator.language.greeting) {
+            for line in ["Hola. Me gustaría tomar un café con leche.", "Yo quiere una tostada también, por favor."] {
+                let previous = coordinator.caption
+                await coordinator.sendTyped(line)
+                guard await waitForReply(after: previous) else { break }
+                replies += 1
+            }
+        }
+        report(replies == 2 ? "complete" : "incomplete", replies: replies)
     }
 
     @MainActor private static func verifyMeaning(_ coordinator: ConversationCoordinator) async {
