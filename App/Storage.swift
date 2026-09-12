@@ -13,6 +13,7 @@ import MuralCore
 @MainActor @Observable final class LearningStore {
     private(set) var archive = Archive()
     var error: String?
+    @ObservationIgnored var onSessionInvalidation: ((UUID) -> Void)?
     let container: ModelContainer
     private var document: StoredArchive
     private let migrationBackupURL: URL?
@@ -56,7 +57,7 @@ import MuralCore
         else { archive.sessions.append(session) }
         persist()
     }
-    func deleteSession(_ id: UUID) { archive.sessions.removeAll { $0.id == id }; persist() }
+    func deleteSession(_ id: UUID) { onSessionInvalidation?(id); archive.sessions.removeAll { $0.id == id }; persist() }
     func hideWord(_ id: String) { archive.preferences.hiddenWords.append(id); persist() }
     func correctPassage(sessionID: UUID, passageID: String, text: String) {
         guard let index = archive.sessions.firstIndex(where: { $0.id == sessionID }),
@@ -64,6 +65,7 @@ import MuralCore
         for (offset, fragment) in passage.fragments.enumerated() {
             archive.sessions[index].correctFragment(id: fragment.id, text: offset == 0 ? String(text.prefix(10_000)) : "")
         }
+        onSessionInvalidation?(sessionID)
         persist()
     }
     func deleteAll() {
@@ -75,6 +77,7 @@ import MuralCore
                 return
             }
         }
+        archive.sessions.forEach { onSessionInvalidation?($0.id) }
         archive.sessions = []; archive.preferences.hiddenWords = []; persist()
     }
     func exportData() throws -> Data { try archive.encoded() }

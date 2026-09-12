@@ -14,6 +14,7 @@ import MuralCore
     private(set) var outputLevel = 0.0
     private(set) var isMuted = false
     private let meanings: MeaningController
+    private let finalAssessments: FinalAssessmentQueue
     var meaning: String { meanings.text }
     var translating: Bool { meanings.isLoading }
     var meaningError: String? { meanings.error }
@@ -45,6 +46,10 @@ import MuralCore
     init(store: LearningStore) {
         self.store = store
         let api = APIClient(); self.api = api
+        finalAssessments = FinalAssessmentQueue { snapshot, passage in
+            guard store.preferences.aiConsentVersion == AIProcessingConsent.version || AudioVerification.requested else { throw AIProcessingConsent.ConsentError.required }
+            return try await Self.assess(api: api, snapshot: snapshot, passage: passage)
+        }
         meanings = MeaningController { request in
             guard store.preferences.aiConsentVersion == AIProcessingConsent.version || AudioVerification.requested else { throw AIProcessingConsent.ConsentError.required }
             guard let language = LanguageRegistry.module(for: request.learningLanguageID) else { throw ArchiveError.unsupportedLanguage }
@@ -57,6 +62,12 @@ import MuralCore
             self.session?.inputTokens += result.inputTokens; self.session?.outputTokens += result.outputTokens
             self.save()
         }
+        finalAssessments.onResult = { [weak self] result in
+            guard let self, let updated = result.applying(to: self.store.sessions.first(where: { $0.id == result.sessionID })) else { return }
+            self.store.save(updated)
+            if self.session?.id == updated.id { self.session = updated }
+        }
+        store.onSessionInvalidation = { [weak self] id in self?.finalAssessments.cancel(id) }
         transport.onEvent = { [weak self] in self?.handle($0) }
         transport.onLevels = { [weak self] input, output in
             guard let self else { return }
@@ -212,6 +223,7 @@ import MuralCore
         transport.disconnect(); pendingCommands = [:]; working = false
         session?.endedAt = .now; session?.usageFinal = final
         save(); state = .ended
+        if let session { finalAssessments.submit(session) }
         scheduleTranslation(); scheduleReset()
         if !final, session?.providerID != nil { notice = "Conversation saved. Final voice usage is unconfirmed." }
         if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
@@ -286,9 +298,7 @@ import MuralCore
                 if Date().timeIntervalSince(self.lastActivity) > 120 {
                     self.notice = "Mural ended this quiet session to avoid running up usage."; self.end(reason: "Inactivity"); return
                 }
-                if self.pendingCommands.values.contains(where: { Date().timeIntervalSince($0) > 20 }) {
-                    self.notice = "A teaching update hasn’t been acknowledged yet."; self.pendingCommands = self.pendingCommands.filter { Date().timeIntervalSince($0.value) <= 20 }
-                }
+                self.pendingCommands = self.pendingCommands.filter { Date().timeIntervalSince($0.value) <= 20 }
             }
         }
     }
@@ -347,6 +357,15 @@ import MuralCore
     }
     #endif
     private struct AssessmentResult: Decodable { var outcome: Outcome; var suggestedLevel: Int; var nextGoal: String; var capability: String; var words: [WordProposal] }
+    private static func assess(api: APIClient, snapshot: SessionRecord, passage: Passage) async throws -> FinalAssessmentResult {
+        guard let language = LanguageRegistry.module(for: snapshot.languageID) else { throw ArchiveError.unsupportedLanguage }
+        let result = try await api.respond(instructions: TeachingPolicy.assessment(language: language), input: TeachingPolicy.context(snapshot, passage: passage), schema: APIClient.assessmentSchema(language: language))
+        let decoded = try JSONDecoder().decode(AssessmentResult.self, from: Data(result.text.utf8))
+        let proposed = Assessment(passageID: passage.id, revisionKey: passage.revisionKey, outcome: decoded.outcome, suggestedLevel: decoded.suggestedLevel,
+                                  nextGoal: decoded.nextGoal, capability: decoded.capability, words: decoded.words, context: snapshot.themeID ?? "free")
+        return FinalAssessmentResult(sessionID: snapshot.id, languageID: snapshot.languageID, assessment: proposed,
+                                     inputTokens: result.usage.input, outputTokens: result.usage.output, searchCalls: result.usage.searches)
+    }
     private func scheduleAssessment() {
         assessmentTask?.cancel()
         assessmentTask = Task { [weak self] in
@@ -355,19 +374,21 @@ import MuralCore
                 guard let self, let snapshot = self.session, let p = snapshot.passages.last(where: { $0.speaker == .user }), p.text.count >= 3,
                       p.revisionKey != self.lastAssessmentKey, self.state == .active else { return }
                 guard let targetLanguage = LanguageRegistry.module(for: snapshot.languageID) else { return }
-                let result = try await self.api.respond(instructions: TeachingPolicy.assessment(language: targetLanguage), input: TeachingPolicy.context(snapshot, passage: p), schema: APIClient.assessmentSchema(language: targetLanguage))
-                guard self.state == .active, self.session?.id == snapshot.id, self.userPassage?.revisionKey == p.revisionKey,
+                let result = try await Self.assess(api: self.api, snapshot: snapshot, passage: p)
+                guard !Task.isCancelled, self.state == .active, self.session?.id == snapshot.id, self.userPassage?.revisionKey == p.revisionKey,
                       let current = self.session else { return }
-                let decoded = try JSONDecoder().decode(AssessmentResult.self, from: Data(result.text.utf8))
-                let proposed = Assessment(passageID: p.id, revisionKey: p.revisionKey, outcome: decoded.outcome, suggestedLevel: decoded.suggestedLevel,
-                                          nextGoal: decoded.nextGoal, capability: decoded.capability, words: decoded.words, context: snapshot.themeID ?? "free")
-                guard let validated = LearningEngine.validate(proposed, session: current) else { return }
+                guard let validated = LearningEngine.validate(result.assessment, session: current) else { return }
                 self.session?.assessments.removeAll { $0.passageID == p.id }; self.session?.assessments.append(validated)
-                self.lastAssessmentKey = p.revisionKey; self.addUsage(result.usage); self.save()
+                self.lastAssessmentKey = p.revisionKey
+                self.addUsage(APIUsage(input: result.inputTokens, output: result.outputTokens, searches: result.searchCalls)); self.save()
                 let learner = self.store.learner
                 self.append("thinking", "Teaching context, not spoken text: challenge \(learner.challenge)/5 in \(targetLanguage.name). Next goal: \(learner.nextGoal). Revisit naturally: \(learner.words.filter { $0.dueAt < .now }.prefix(3).map(\.lemma).joined(separator: ", ")).")
             } catch is CancellationError { }
-            catch { self?.notice = "The conversation can continue; this passage hasn’t been assessed." }
+            catch let error as URLError where error.code == .cancelled { }
+            catch {
+                // The passage remains saved without unverified learning evidence.
+                // Assessment status does not belong in the conversation interface.
+            }
         }
     }
     private func checkLanguage() {

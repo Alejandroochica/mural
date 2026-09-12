@@ -108,3 +108,10 @@ Settings now has a **Help and privacy** section with `https://mural.chat/privacy
 - The combined simulator build and the existing Settings navigation test passed at 14:42 CEST. This checked the secure-key disclosure and return to Talk; it did not browse the release pages.
 - The unsigned **0.1.0 (1)** archive was refreshed at 14:44 CEST with the Settings links. Compilation and archive creation are not Apple upload validation, TestFlight review or App Store approval.
 - Custom-domain availability remained pending at this checkpoint. Confirm all three pages load without login after DNS propagation before submitting the app.
+
+
+## 12 September 2026 — silent final assessment and access requests
+
+The final native update passed 53 Core tests, including five final-assessment lifecycle tests, and five focused simulator UI checks. New-user language/subtitle onboarding, AI consent, existing-user consent, Settings, meanings after ending and reset remained available. Closing attempts the latest unassessed user passage silently for up to 15 seconds. Results apply to the original saved transcript; reset or a new conversation does not redirect them, and deletion or correction cancels stale work. App termination can interrupt this in-memory attempt. The signed personal update was installed and launched on the authorized iPhone without uninstalling or changing saved preferences. No new live AI conversation was used for this check.
+
+The backend passed 57 tests in Node 22 with PostgreSQL 17 and no skipped tests. Access-request cases cover validation, exact origins, proxy identity, concurrency, duplicates, admission limits, retention, private export and deletion. A separate real Stripe sandbox Checkout test received signed payment and refund webhooks: one payment credited $10 once, duplicate delivery added no credit, and the full sandbox refund restored a zero balance with one reversal. A fresh session verified that Adaptive Pricing is disabled and the amount remains USD 12.16. No real money, production customer records or live payment credentials were used. These checks do not validate a native purchase flow or enable production payments.

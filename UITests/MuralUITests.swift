@@ -140,6 +140,9 @@ final class MuralUITests: XCTestCase {
     func testMeaningLabelWorksAfterEndingAndManualResetKeepsHistory() {
         let app = launch(ended: true)
         XCTAssertTrue(app.buttons["new-conversation"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["new-conversation"].isHittable)
+        XCTAssertTrue(app.buttons["start-conversation"].isHittable)
+        XCTAssertTrue(app.buttons["Conversation transcript"].isHittable)
         XCTAssertEqual(app.staticTexts["meaning-caption"].label, "I like coffee.")
         app.buttons["Hide meaning subtitles"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.93)).tap()
         XCTAssertFalse(app.staticTexts["meaning-caption"].exists)

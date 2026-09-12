@@ -69,6 +69,7 @@ export class SandboxPayments {
     if (!attempted.rowCount) throw new ServiceError('checkout_reconciliation_required', 409);
     const session = await this.stripe.checkout.sessions.create({
       mode: 'payment', client_reference_id: order.id, line_items: [{ price: order.stripe_price_id, quantity: 1 }],
+      adaptive_pricing: { enabled: false },
       success_url: `${this.origin}/payment-return?status=success`, cancel_url: `${this.origin}/payment-return?status=cancelled`,
       metadata: { mural_order_id: order.id }, allow_promotion_codes: false,
       custom_text: { submit: { message: `AI usage: $${(aiMinor / 100).toFixed(2)}. Mural fee (15%): $${(serviceFeeMinor / 100).toFixed(2)}. Payment fee: $${(paymentFeeMinor / 100).toFixed(2)}. USD. Sandbox only.` } }

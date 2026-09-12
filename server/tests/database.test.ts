@@ -153,6 +153,20 @@ integration('checkout retries retrieve the mapped session after Stripe idempoten
   await applyStripeEvent(db!, event('checkout.session.completed', item.paid));
   assert.equal((await wallet(id)).balance, 10n * NANO_USD);
 });
+integration('checkout disables adaptive currency pricing so the quoted USD amount stays fixed', async () => {
+  const id = await account();
+  const payments = new SandboxPayments('sk_test_fake', 'whsec_fake', new Map([['ai-10-usd',
+    { id: 'ai-10-usd', priceID: 'price_test', aiMinor: 1000, serviceFeeMinor: 150, paymentFeeMinor: 66 }]]), 'http://localhost:8080');
+  payments.stripe.prices.retrieve = (async () => ({ active: true, livemode: false, currency: 'usd', unit_amount: 1216, type: 'one_time' })) as never;
+  payments.stripe.checkout.sessions.create = (async (request: Stripe.Checkout.SessionCreateParams) => {
+    assert.deepEqual(request.adaptive_pricing, { enabled: false });
+    assert.deepEqual(request.line_items, [{ price: 'price_test', quantity: 1 }]);
+    return { id: 'cs_fixed_usd', client_reference_id: request.client_reference_id, livemode: false, status: 'open',
+      mode: 'payment', currency: 'usd', amount_total: 1216, adaptive_pricing: { enabled: false }, url: 'https://checkout.stripe.com/fixed-usd' };
+  }) as never;
+  const response = await payments.checkout(db!, id, 'ai-10-usd', 'fixed-usd-quote');
+  assert.deepEqual(response.quote, { currency: 'USD', aiMinor: 1000, serviceFeeMinor: 150, paymentFeeMinor: 66 });
+});
 integration('expired mapped checkout and old uncertain creates never create another payable session', async () => {
   const id = await account(), item = await order(id);
   const payments = new SandboxPayments('sk_test_fake', 'whsec_fake', new Map([['ai-10-usd',
