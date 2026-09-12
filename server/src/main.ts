@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { AppleTokenRevoker } from './apple-revocation.js';
 import { HostedVoice } from './hosted-voice.js';
 import { OpenAILiveProvider } from './live-provider.js';
+import { AccessRequests, accessRequestConfig, pruneAccessRequests } from './access-requests.js';
 
 const databaseURL = process.env.DATABASE_URL;
 if (!databaseURL) { console.error('DATABASE_URL is required.'); process.exit(1); }
@@ -28,8 +29,14 @@ try {
       { accountAllowlist: accounts, lifetimeFundingCapNano: BigInt(process.env.HOSTED_VOICE_LIFETIME_CAP_NANO ?? '0') });
     await hosted.start();
   }
-  const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient }, payments, appleRevoker, hosted });
-  const cleanup = setInterval(() => { void pruneAuthenticationRecords(db).catch(() => {}); }, 15 * 60_000);
+  const accessConfig = accessRequestConfig(process.env);
+  const accessRequests = accessConfig ? new AccessRequests(db, accessConfig) : undefined;
+  await pruneAccessRequests(db);
+  const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient }, payments, appleRevoker, hosted, accessRequests });
+  const cleanup = setInterval(() => {
+    void pruneAuthenticationRecords(db).catch(() => {});
+    void pruneAccessRequests(db).catch(() => { console.error('Access request retention cleanup failed.'); });
+  }, 15 * 60_000);
   cleanup.unref();
   const close = async () => { clearInterval(cleanup); await app.close(); await hosted?.stop(); await db.end(); process.exit(0); };
   process.on('SIGTERM', close); process.on('SIGINT', close);

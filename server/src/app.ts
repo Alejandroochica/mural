@@ -7,8 +7,9 @@ import { applyStripeEvent, type SandboxPayments } from './payments.js';
 import { RATE_VERSION } from './pricing.js';
 import { trialEligibility, UnconfiguredAttestor, type TrialAttestor } from './trial.js';
 import type { HostedVoice } from './hosted-voice.js';
+import { ACCESS_REQUEST_PATH, type AccessRequests } from './access-requests.js';
 
-export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice }
+export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests }
 const objectBody = (request: FastifyRequest): Record<string, unknown> => {
   if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Buffer.isBuffer(request.body)) throw new ServiceError('invalid_request');
   return request.body as Record<string, unknown>;
@@ -36,6 +37,8 @@ export function createApp(services: Services) {
   const windows = new Map<string, { until: number; count: number }>();
   app.addHook('onRequest', async (request, reply) => {
     reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
+    // This endpoint has separate durable admission limits; Caddy's shared address is not its visitor identity.
+    if (request.url.split('?')[0] === ACCESS_REQUEST_PATH) return;
     if (request.url === '/healthz') return;
     const now = Date.now();
     if (windows.size > 10_000) for (const [key, value] of windows) if (value.until < now) windows.delete(key);
@@ -61,6 +64,39 @@ export function createApp(services: Services) {
     voice: { model: 'gpt-live-1', perMinuteNanoUSD: '50000000', billingUnit: 'active-session-seconds' },
     text: { model: 'gpt-5.6-luna', inputPerTokenNanoUSD: '200', cachedInputPerTokenNanoUSD: '20', outputPerTokenNanoUSD: '1200' },
     searchPerCallNanoUSD: '10000000', paymentFees: 'quoted separately at checkout', hostedVoiceAvailable: false }));
+  app.route({ method: ['POST', 'OPTIONS'], url: ACCESS_REQUEST_PATH, bodyLimit: 1024,
+    onRequest: async (request, reply) => {
+      const access = services.accessRequests;
+      if (!access) throw new ServiceError('access_requests_unavailable', 503);
+      const origin = access.allowedOrigin(request.headers.origin);
+      reply.header('Access-Control-Allow-Origin', origin).header('Vary', 'Origin');
+      if (request.method === 'OPTIONS') {
+        const requested = request.headers['access-control-request-headers'];
+        if (request.headers['access-control-request-method'] !== 'POST' ||
+            (requested !== undefined && (typeof requested !== 'string' || requested.toLowerCase().split(',').some(header => header.trim() !== 'content-type'))))
+          throw new ServiceError('invalid_preflight');
+        return reply.header('Access-Control-Allow-Methods', 'POST').header('Access-Control-Allow-Headers', 'Content-Type')
+          .header('Access-Control-Max-Age', '600').code(204).send();
+      }
+      // Caddy overwrites these headers. A direct request cannot invent its network address.
+      access.clientAddress(request.headers, request.raw.socket.remoteAddress ?? request.ip, origin);
+      if (request.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') throw new ServiceError('invalid_content_type', 415);
+    },
+    handler: async (request, reply) => {
+      const access = services.accessRequests!;
+      try {
+        const origin = access.allowedOrigin(request.headers.origin);
+        await access.submit(request.body, access.clientAddress(request.headers, request.raw.socket.remoteAddress ?? request.ip, origin));
+      } catch (error) {
+        if (error instanceof ServiceError) {
+          if (error.status === 429) reply.header('Retry-After', '3600');
+          throw error;
+        }
+        throw new ServiceError('access_requests_unavailable', 503);
+      }
+      return reply.code(202).send({ accepted: true });
+    }
+  });
   app.post('/v1/auth/challenge', async () => createChallenge(db));
   app.post('/v1/auth/exchange', async request => {
     const body = objectBody(request), provider = stringField(body, 'provider', 10);
