@@ -4,7 +4,7 @@
 Three checks, each returning a list of human-readable failure lines (empty when the
 platforms agree):
 
-  prompts        Core/TeachingPolicy.swift vs .../core/TeachingPolicy.kt: the actual
+  prompts        apps/ios/Core/TeachingPolicy.swift vs .../core/TeachingPolicy.kt: the actual
                  instruction text sent to the model, compared with string interpolation
                  collapsed to a placeholder so wording (not syntax) is what is checked.
   constants      A fixed table of shared numeric thresholds, each extracted from both
@@ -259,44 +259,44 @@ def check_prompts(swift_path, kotlin_path):
 # Only constants extractable with one small, unambiguous regex per side are listed here.
 CONSTANTS = [
     ('transcript_gap_ms', 'scalar',
-     ('Core/Models.swift', r'fragment\.startMS - result\[i\]\.endMS <= (\d[\d_]*)'),
-     ('android/app/src/main/java/chat/mural/core/Models.kt', r'f\.startMS - p\.endMS <= (\d[\d_]*)')),
+     ('apps/ios/Core/Models.swift', r'fragment\.startMS - result\[i\]\.endMS <= (\d[\d_]*)'),
+     ('apps/android/app/src/main/java/chat/mural/core/Models.kt', r'f\.startMS - p\.endMS <= (\d[\d_]*)')),
     ('redirect_confidence', 'scalar',
-     ('Core/TeachingPolicy.swift', r'confidence > (\d+\.\d+)'),
-     ('android/app/src/main/java/chat/mural/core/TeachingPolicy.kt', r'confidence>(\d+\.\d+)')),
+     ('apps/ios/Core/TeachingPolicy.swift', r'confidence > (\d+\.\d+)'),
+     ('apps/android/app/src/main/java/chat/mural/core/TeachingPolicy.kt', r'confidence>(\d+\.\d+)')),
     ('max_words', 'scalar',
-     ('Core/LearningEngine.swift', r'proposal\.words\.count <= (\d[\d_]*)'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'proposal\.words\.size>(\d[\d_]*)')),
+     ('apps/ios/Core/LearningEngine.swift', r'proposal\.words\.count <= (\d[\d_]*)'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'proposal\.words\.size>(\d[\d_]*)')),
     ('next_goal_prefix', 'scalar',
-     ('Core/LearningEngine.swift', r'nextGoal\.prefix\((\d[\d_]*)\)'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'nextGoal\.take\((\d[\d_]*)\)')),
+     ('apps/ios/Core/LearningEngine.swift', r'nextGoal\.prefix\((\d[\d_]*)\)'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'nextGoal\.take\((\d[\d_]*)\)')),
     ('capability_prefix', 'scalar',
-     ('Core/LearningEngine.swift', r'capability\.prefix\((\d[\d_]*)\)'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'capability\.take\((\d[\d_]*)\)')),
+     ('apps/ios/Core/LearningEngine.swift', r'capability\.prefix\((\d[\d_]*)\)'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'capability\.take\((\d[\d_]*)\)')),
     ('min_word_confidence', 'scalar',
-     ('Core/LearningEngine.swift', r'word\.confidence >= (\d+\.\d+)'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'word\.confidence !in (\d+\.\d+)\.\.')),
+     ('apps/ios/Core/LearningEngine.swift', r'word\.confidence >= (\d+\.\d+)'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'word\.confidence !in (\d+\.\d+)\.\.')),
     ('imitation_window_ms', 'scalar',
-     ('Core/LearningEngine.swift', r'\$0\.endMS < (\d[\d_]*)'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'passage\.startMS-p\.endMS<(\d[\d_]*)')),
+     ('apps/ios/Core/LearningEngine.swift', r'\$0\.endMS < (\d[\d_]*)'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'passage\.startMS-p\.endMS<(\d[\d_]*)')),
     ('review_intervals_days', 'list',
-     ('Core/LearningEngine.swift', r'\[([\d., ]+)\]\[bars\] \* 86400'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'listOf\(([\d., ]+)\)\[bars\]\*86400')),
+     ('apps/ios/Core/LearningEngine.swift', r'\[([\d., ]+)\]\[bars\] \* 86400'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'listOf\(([\d., ]+)\)\[bars\]\*86400')),
     ('steady_window_days', 'scalar',
-     ('Core/LearningEngine.swift', r'>= (\d[\d_]*) \* 86400'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'>=(\d[\d_]*)\*86400')),
+     ('apps/ios/Core/LearningEngine.swift', r'>= (\d[\d_]*) \* 86400'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'>=(\d[\d_]*)\*86400')),
     ('steady_min_days', 'scalar',
-     ('Core/LearningEngine.swift', r'days >= (\d[\d_]*) &&'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'days>=(\d[\d_]*) &&')),
+     ('apps/ios/Core/LearningEngine.swift', r'days >= (\d[\d_]*) &&'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'days>=(\d[\d_]*) &&')),
     ('steady_min_contexts', 'scalar',
-     ('Core/LearningEngine.swift', r'contexts >= (\d[\d_]*) &&'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'contexts>=(\d[\d_]*) &&')),
+     ('apps/ios/Core/LearningEngine.swift', r'contexts >= (\d[\d_]*) &&'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'contexts>=(\d[\d_]*) &&')),
     ('capability_evidence_min', 'scalar',
-     ('Core/LearningEngine.swift', r'value\.count >= (\d[\d_]*)'),
-     ('android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'\.size>=(\d[\d_]*) \}')),
+     ('apps/ios/Core/LearningEngine.swift', r'value\.count >= (\d[\d_]*)'),
+     ('apps/android/app/src/main/java/chat/mural/core/LearningEngine.kt', r'\.size>=(\d[\d_]*) \}')),
     ('idle_voice_s', 'scalar',
-     ('App/ConversationCoordinator.swift', r'lastActivity\) > (\d[\d_]*)'),
-     ('android/app/src/main/java/chat/mural/core/SessionLimits.kt', r'idleSeconds > (\d[\d_]*)')),
+     ('apps/ios/App/ConversationCoordinator.swift', r'lastActivity\) > (\d[\d_]*)'),
+     ('apps/android/app/src/main/java/chat/mural/core/SessionLimits.kt', r'idleSeconds > (\d[\d_]*)')),
 ]
 
 
@@ -524,11 +524,11 @@ def check_archive_fields(swift_path, kotlin_path):
 
 def run_checks(root):
     failures = []
-    failures += check_prompts(root / 'Core/TeachingPolicy.swift',
-                               root / 'android/app/src/main/java/chat/mural/core/TeachingPolicy.kt')
+    failures += check_prompts(root / 'apps/ios/Core/TeachingPolicy.swift',
+                               root / 'apps/android/app/src/main/java/chat/mural/core/TeachingPolicy.kt')
     failures += check_constants(root)
-    failures += check_archive_fields(root / 'Core/Models.swift',
-                                      root / 'android/app/src/main/java/chat/mural/core/Models.kt')
+    failures += check_archive_fields(root / 'apps/ios/Core/Models.swift',
+                                      root / 'apps/android/app/src/main/java/chat/mural/core/Models.kt')
     return failures
 
 

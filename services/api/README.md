@@ -2,7 +2,7 @@
 
 This backend prepares accounts, a credit ledger, and **Stripe sandbox** payments. Public funded conversations and free trials remain unavailable; live Stripe keys are rejected. A disabled, operator-allowlisted voice experiment now has a real network adapter and durable accounting, tested entirely against a local fake provider. The existing iPhone BYOK build continues to operate independently.
 
-Consumer pricing is moving to **conversation minutes**. The time ledger, configurable welcome allowance, guest-to-account transfer and audited grants are implemented separately from provider cost accounting. They do not activate hosted calls or real purchases. Read [conversation minutes](../docs/conversation-minutes.md) and [how to manage free minutes](../docs/manage-free-minutes.md) before configuring the operator controls.
+Consumer pricing is moving to **conversation minutes**. The time ledger, configurable welcome allowance, guest-to-account transfer and audited grants are implemented separately from provider cost accounting. They do not activate hosted calls or real purchases. Read [conversation minutes](../../docs/conversation-minutes.md) and [how to manage free minutes](../../docs/manage-free-minutes.md) before configuring the operator controls.
 
 ## Run locally
 

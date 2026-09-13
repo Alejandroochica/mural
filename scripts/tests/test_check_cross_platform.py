@@ -75,7 +75,7 @@ class ConstantsTests(unittest.TestCase):
     GAP_ONLY = [c for c in ccp.CONSTANTS if c[0] == 'transcript_gap_ms']
 
     def write_models(self, root, swift_gap, kotlin_gap):
-        core = root / 'Core'
+        core = root / 'apps/ios/Core'
         core.mkdir(parents=True)
         (core / 'Models.swift').write_text(
             'public enum Transcript {\n'
@@ -83,7 +83,7 @@ class ConstantsTests(unittest.TestCase):
             '        if fragment.startMS - result[i].endMS <= %d {}\n'
             '    }\n'
             '}\n' % swift_gap)
-        android = root / 'android/app/src/main/java/chat/mural/core'
+        android = root / 'apps/android/app/src/main/java/chat/mural/core'
         android.mkdir(parents=True)
         (android / 'Models.kt').write_text(
             'object Transcript {\n'
@@ -111,7 +111,7 @@ class ConstantsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             self.write_models(root, 2200, 2200)
-            (root / 'android/app/src/main/java/chat/mural/core/Models.kt').unlink()
+            (root / 'apps/android/app/src/main/java/chat/mural/core/Models.kt').unlink()
             failures = ccp.check_constants(root, self.GAP_ONLY)
             self.assertEqual(len(failures), 1)
             self.assertTrue(failures[0].startswith('constants: transcript_gap_ms'), failures)
@@ -121,7 +121,7 @@ class ConstantsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             self.write_models(root, 2200, 2200)
-            path = root / 'Core/Models.swift'
+            path = root / 'apps/ios/Core/Models.swift'
             path.write_text(path.read_text().replace('result[i].endMS <= 2200', 'gap(result[i]) <= 2200'))
             failures = ccp.check_constants(root, self.GAP_ONLY)
             self.assertEqual(len(failures), 1)
@@ -215,13 +215,13 @@ class ReportTests(unittest.TestCase):
     def test_failures_name_repository_relative_paths(self):
         root = REPO_ROOT.resolve()
         failure = ccp.format_failure('prompts', 'voice() wording differs between platforms',
-                                     root / 'android/app/src/main/java/chat/mural/core/TeachingPolicy.kt', 4,
-                                     root / 'Core/TeachingPolicy.swift', 4)
+                                     root / 'apps/android/app/src/main/java/chat/mural/core/TeachingPolicy.kt', 4,
+                                     root / 'apps/ios/Core/TeachingPolicy.swift', 4)
         output = io.StringIO()
         with mock.patch.object(ccp, 'run_checks', return_value=[failure]), contextlib.redirect_stdout(output):
             self.assertEqual(ccp.main(['--root', str(root)]), 1)
         self.assertNotIn(str(root), output.getvalue())
-        self.assertIn('Update android/app/src/main/java/chat/mural/core/TeachingPolicy.kt:4 to match Core/TeachingPolicy.swift:4.', output.getvalue())
+        self.assertIn('Update apps/android/app/src/main/java/chat/mural/core/TeachingPolicy.kt:4 to match apps/ios/Core/TeachingPolicy.swift:4.', output.getvalue())
 
 
 if __name__ == '__main__':

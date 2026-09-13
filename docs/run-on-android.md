@@ -4,7 +4,7 @@
 
 You need Android 8.0 or later and an OpenAI project key with access to the models Mural uses. A ChatGPT subscription does not include API credit.
 
-Install the generated APK (`android/app/build/outputs/apk/debug/app-debug.apk`) by opening it on the phone and allowing the installation, or from a computer:
+Install the generated APK (`apps/android/app/build/outputs/apk/debug/app-debug.apk`) by opening it on the phone and allowing the installation, or from a computer:
 
 1. Turn on **Developer options → USB debugging**. To show Developer options, tap **Build number** seven times in About phone.
 2. Connect the phone with a data cable and accept the authorization prompt for this computer. On Android 11 or later you can use **Wireless debugging** instead: pair once with `adb pair <ip>:<port> <code>`, then `adb connect`.
@@ -12,13 +12,13 @@ Install the generated APK (`android/app/build/outputs/apk/debug/app-debug.apk`) 
 
    ```sh
    adb devices -l
-   adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+   adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
    adb shell am start -n chat.mural.android/chat.mural.MainActivity
    ```
 
 `-r` updates the app and keeps its data. Updates need the same application ID (`chat.mural.android`) and the same signing key; do not uninstall the app if you want to keep your history. USB or wireless debugging is only needed to install and test from a computer, not for everyday use. The debug APK is for personal installation, not for Google Play.
 
-If `android/.signing/debug.keystore` exists (it is ignored by Git), the debug build signs with it, so a personal installation keeps its signing identity across SDK reinstalls. Keep a copy when moving development to another computer; losing it means exporting a backup and reinstalling with a new signature.
+If `apps/android/.signing/debug.keystore` exists (it is ignored by Git), the debug build signs with it, so a personal installation keeps its signing identity across SDK reinstalls. Keep a copy when moving development to another computer; losing it means exporting a backup and reinstalling with a new signature.
 
 ## First use
 
@@ -40,10 +40,10 @@ Android exports use the same format, and iPhone can import them. There is no aut
 
 ## Build
 
-Install Java 17 and Android Studio or the official command-line tools. Install SDK Platform 36 and Build Tools 35.0.0. Set `ANDROID_HOME`, or create a private `android/local.properties` with `sdk.dir=/path/to/sdk`.
+Install Java 17 and Android Studio or the official command-line tools. Install SDK Platform 36 and Build Tools 35.0.0. Set `ANDROID_HOME`, or create a private `apps/android/local.properties` with `sdk.dir=/path/to/sdk`.
 
 ```sh
-cd android
+cd apps/android
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
@@ -52,7 +52,7 @@ On Windows use `gradlew.bat`. Gradle downloads dependencies on first use. The wr
 For interface tests, use an emulator or a test device:
 
 ```sh
-cd android
+cd apps/android
 ./gradlew :app:connectedUiTestAndroidTest
 ```
 

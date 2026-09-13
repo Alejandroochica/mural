@@ -38,7 +38,7 @@ android {
     testOptions { unitTests.isReturnDefaultValues = true }
 }
 tasks.withType<Test>().configureEach {
-    inputs.dir(rootProject.file("../Tests/Fixtures/cross-platform"))
+    inputs.dir(rootProject.file("../../shared/fixtures/cross-platform"))
         .withPropertyName("crossPlatformFixtures")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }

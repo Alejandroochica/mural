@@ -2,9 +2,9 @@
 
 ## Decision and scope
 
-The original app is SwiftUI and SwiftData and cannot be built as an APK. The Android client is a separate native app in `android/`, written in Kotlin with Jetpack Compose. The iPhone client and the server are unchanged. Rewriting iPhone with Flutter or React Native would widen the scope unnecessarily, and wrapping a web view would neither reuse the SwiftUI interface nor solve native audio.
+Mural keeps two native clients: SwiftUI and SwiftData in `apps/ios/`, and Kotlin with Jetpack Compose in `apps/android/`. The API lives in `services/api/`. Shared fixtures and contracts keep learning data compatible while each app retains its platform audio, accessibility and animation tools.
 
-The Android client keeps the four language modules, the 24 themes and their cultural variants, WebRTC voice, written replies, meanings, word lookup, current topics with sources, history, corrections, vocabulary and learning projection. It adds written conversation without the microphone permission. Managed accounts, payments and sync stay disabled, as on iPhone.
+The Android client keeps the eight language modules, the 24 themes and their cultural variants, WebRTC voice, written replies, meanings, word lookup, current topics with sources, history, corrections, vocabulary and learning projection. It adds written conversation without the microphone permission. Android account and minute-purchase integration is in progress. The public hosted conversation service remains disabled; no cloud learning sync is planned.
 
 ## Components
 
@@ -38,12 +38,12 @@ The repository protocol is unchanged: OpenAI `POST /v1/live/sessions` with `gpt-
 
 ## Keeping both clients in sync
 
-Language content is generated from the Swift modules by `scripts/export_android_content.py`. `scripts/check_cross_platform.py` compares teaching prompts, learning constants and archive fields between `Core/` and `android/app/src/main/java/chat/mural/core/`, and `Tests/Fixtures/cross-platform/` holds an archive that both `swift test` and the Gradle tests decode, project and re-encode. See [the language architecture](../language-architecture.md).
+Language content is generated from the Swift modules by `scripts/export_android_content.py`. `scripts/check_cross_platform.py` compares teaching prompts, learning constants and archive fields between `apps/ios/Core/` and `apps/android/app/src/main/java/chat/mural/core/`, and `shared/fixtures/cross-platform/` holds an archive that both `swift test` and the Gradle tests decode, project and re-encode. See [the language architecture](../language-architecture.md).
 
 ## Platform and verification
 
-Minimum Android 8.0 (API 26); compile and target SDK 35. Java 17, Gradle 8.11.1 with a verified checksum, AGP 8.9.2 and pinned dependencies. The APK bundles WebRTC for ARM and x86 emulators. Google Play publishing and a release signing key are outside a personal installation.
+Minimum Android 8.0 (API 26); compile and target SDK 36. Java 17, Gradle 8.11.1 with a verified checksum, AGP 8.10.1 and pinned dependencies. The APK bundles WebRTC for ARM and x86 emulators. Google Play publishing and a release signing key are outside a personal installation.
 
 Verification covers models, backups, evidence, networking without OpenAI, the shared fixture, the meaning and final assessment queues, build, Android Lint, native library alignment and on-device interface tests. A real conversation is verified separately with the owner's key; offline tests cannot prove model access for a given project or audio quality.
 
-References: [AGP 8.9 compatibility](https://developer.android.com/build/releases/agp-8-9-0-release-notes), [WebRTC Android](https://github.com/webrtc-sdk/android), [Android permissions](https://developer.android.com/training/permissions/requesting), [Android Keystore](https://developer.android.com/privacy-and-security/keystore), [TextClassifier](https://developer.android.com/reference/android/view/textclassifier/TextClassifier), [original transport](../../App/LiveTransport.swift).
+References: [AGP 8.10 compatibility](https://developer.android.com/build/releases/agp-8-10-0-release-notes), [WebRTC Android](https://github.com/webrtc-sdk/android), [Android permissions](https://developer.android.com/training/permissions/requesting), [Android Keystore](https://developer.android.com/privacy-and-security/keystore), [TextClassifier](https://developer.android.com/reference/android/view/textclassifier/TextClassifier), [original transport](../../apps/ios/App/LiveTransport.swift).

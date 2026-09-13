@@ -3,7 +3,7 @@ import XCTest
 
 /// Runs the same archive fixture as Android's CrossPlatformFixtureTest so both cores stay interchangeable.
 final class CrossPlatformFixtureTests: XCTestCase {
-    private let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/cross-platform")
+    private let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../shared/fixtures/cross-platform")
 
     private func source() throws -> Data { try Data(contentsOf: directory.appendingPathComponent("archive.json")) }
     private func expected() throws -> [String: Any] {

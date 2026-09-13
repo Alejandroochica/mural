@@ -7,13 +7,13 @@ Use this guide to install a personal build from source. After installation, the 
 - A Mac with Xcode 26 or later, downloaded from Apple.
 - An iPhone running iOS 26.1 or later and a USB cable for initial setup.
 - An Apple Account added to **Xcode → Settings → Accounts**.
-- An OpenAI project with API billing enabled and access to the models configured in `App/APIClient.swift` and `App/LiveTransport.swift`.
+- An OpenAI project with API billing enabled and access to the models configured in `apps/ios/App/APIClient.swift` and `apps/ios/App/LiveTransport.swift`.
 
 OpenAI API usage is paid separately from ChatGPT. Use your own key for this personal build. Never add a key to source code, an Xcode build setting, a screenshot or a GitHub issue.
 
 ## Install
 
-1. Download the [repository ZIP](https://github.com/Chuloo/mural/archive/refs/heads/main.zip) and extract it, or clone [Chuloo/mural](https://github.com/Chuloo/mural). Open `Mural.xcodeproj` in the directory containing `Package.swift`. Allow Xcode to resolve the pinned WebRTC package.
+1. Download the [repository ZIP](https://github.com/Chuloo/mural/archive/refs/heads/main.zip) and extract it, or clone [Chuloo/mural](https://github.com/Chuloo/mural). Open `apps/ios/Mural.xcodeproj`. Allow Xcode to resolve the pinned WebRTC package.
 2. Select the blue **Mural** project in the navigator. Under **Targets**, choose **Mural**, then open **Signing & Capabilities**.
 3. Enable **Automatically manage signing** and choose your Apple team. For a fork, set a unique bundle identifier, such as `com.yourname.mural`. Do not change an existing installation’s identifier when refreshing it.
 4. Connect the iPhone, unlock it, and accept **Trust This Computer** if shown. In Xcode’s **Window → Devices and Simulators**, wait for the phone to finish preparing.

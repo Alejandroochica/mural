@@ -2,7 +2,7 @@
 """Generate Android's language content from the existing Swift modules.
 
 Only declarative string content is translated; Kotlin owns the runtime policy and models.
-Modules are discovered from `LanguageRegistry.all` in `Core/Languages/LanguageModule.swift`,
+Modules are discovered from `LanguageRegistry.all` in `apps/ios/Core/Languages/LanguageModule.swift`,
 so adding a Swift module and registering it is enough to export it. Run --check in CI to
 detect drift between platforms.
 """
@@ -11,7 +11,7 @@ import json
 import pathlib
 import re
 
-KOTLIN_DEST = 'android/app/src/main/java/chat/mural/core/Languages.kt'
+KOTLIN_DEST = 'apps/android/app/src/main/java/chat/mural/core/Languages.kt'
 # Fields whose value is a nested structure (array/dict), extracted separately from the
 # simple quoted-string fields.
 STRUCTURED_FIELDS = ('teachingFocus', 'themeOverrides')
@@ -39,11 +39,11 @@ def struct_fields(language_module_swift_text):
 
 
 def language_files(core):
-    """`Core/Languages/*.swift` files, ordered as declared in `LanguageRegistry.all`."""
+    """`apps/ios/Core/Languages/*.swift` files, ordered as declared in `LanguageRegistry.all`."""
     text = (core / 'Languages/LanguageModule.swift').read_text()
     match = re.search(r'public static let all:\s*\[LanguageModule\]\s*=\s*\[([^\]]*)\]', text)
     if not match:
-        raise SystemExit('LanguageRegistry.all not found in Core/Languages/LanguageModule.swift.')
+        raise SystemExit('LanguageRegistry.all not found in apps/ios/Core/Languages/LanguageModule.swift.')
     names = re.findall(r'\.(\w+)', match.group(1))
     return [core / 'Languages' / f'{name[0].upper()}{name[1:]}.swift' for name in names]
 
@@ -88,7 +88,7 @@ def generate(core):
         if unknown:
             raise SystemExit(
                 f"Unknown LanguageModule field(s) {', '.join(sorted(unknown))} in {path}. "
-                f"Declare them in Core/Languages/LanguageModule.swift and add support in {KOTLIN_DEST}.")
+                f"Declare them in apps/ios/Core/Languages/LanguageModule.swift and add support in {KOTLIN_DEST}.")
         module_name = path.stem.lower()
         module_names.append(module_name)
         args = []
@@ -123,7 +123,7 @@ def main(argv=None):
     parser.add_argument('--root', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)
     dest = args.root / KOTLIN_DEST
-    result = generate(args.root / 'Core')
+    result = generate(args.root / 'apps/ios/Core')
     if args.check:
         if not dest.exists() or dest.read_text() != result:
             raise SystemExit('Android language content differs. Run python3 scripts/export_android_content.py')

@@ -6,7 +6,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CrossPlatformFixtureTest {
-    private val dir = File("../../Tests/Fixtures/cross-platform")
+    private val dir = File("../../../shared/fixtures/cross-platform")
     private val source = File(dir, "archive.json").readText()
     private val expected = Json.parseToJsonElement(File(dir, "archive-expected.json").readText()).jsonObject
     private val archive = ArchiveCodec.decode(source)
