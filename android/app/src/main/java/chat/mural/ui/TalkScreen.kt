@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -68,12 +70,14 @@ fun TalkScreen(
     val caption = passage?.takeIf { it.isNotBlank() } ?: vm.language.greeting
     val busy = vm.state == "connecting" || vm.state == "closing"
 
+    BoxWithConstraints(Modifier.fillMaxSize().testTag("talk-screen")) {
+    val scrollPage = LocalDensity.current.fontScale > 1.3f || maxHeight < 480.dp
+    val orbSize = minOf(210.dp, maxHeight * 0.30f)
     Column(
         Modifier
             .fillMaxSize()
-            .testTag("talk-screen")
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 18.dp),
+            .then(if (scrollPage) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(color = MuralColors.Butter.copy(alpha = .72f), shape = CircleShape) {
@@ -88,10 +92,16 @@ fun TalkScreen(
             energy = maxOf(vm.outputLevel.toFloat(), vm.inputLevel.toFloat() * .45f),
             listening = vm.state == "active" && vm.isVoiceSession && !vm.isMuted,
             active = vm.state != "closing",
-            modifier = Modifier.size(218.dp),
+            modifier = Modifier.size(orbSize),
         )
         Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession), style = MaterialTheme.typography.labelMedium, color = MuralColors.Secondary)
         Spacer(Modifier.height(20.dp))
+        Column(
+            modifier = (if (scrollPage) Modifier else Modifier.weight(1f).verticalScroll(rememberScrollState()))
+                .fillMaxWidth().testTag("conversation-captions"),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
         Text(
             if (passage == null) AnnotatedString(caption)
             else captionLinks(caption) { word -> lookupWord = word; lookup = true; onLookup(word, caption) },
@@ -125,6 +135,7 @@ fun TalkScreen(
         }
         if (vm.session?.topics?.lastOrNull()?.sources?.isNotEmpty() == true) {
             TextButton(onClick = { transcript = vm.session }) { Text(stringResource(R.string.topics_sources_heading)) }
+        }
         }
         if (vm.working) {
             Spacer(Modifier.height(12.dp))
@@ -166,10 +177,10 @@ fun TalkScreen(
                         }
                     },
                 shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Night),
+                colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Cream),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(26.dp), color = MuralColors.Night, strokeWidth = 3.dp)
+                if (busy) CircularProgressIndicator(Modifier.size(26.dp), color = MuralColors.Cream, strokeWidth = 3.dp)
                 else Text(
                     when {
                         vm.state == "active" && !vm.isVoiceSession -> "⌨"
@@ -201,6 +212,7 @@ fun TalkScreen(
             TextButton(onClick = vm::resetConversation) { Text(stringResource(R.string.talk_new_conversation_button)) }
         }
         Spacer(Modifier.height(16.dp))
+    }
     }
 
     if (typing) TypedReplyDialog(vm, onSendTyped, onDismiss = { typing = false })

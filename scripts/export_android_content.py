@@ -97,8 +97,11 @@ def generate(core):
             if not match:
                 raise SystemExit(f'LanguageModule field {key} not found in {path}. Add it or update {KOTLIN_DEST}.')
             args.append(f'        {key} = {quoted(json.loads(match.group(1)))}')
-        focus = re.search(r'teachingFocus:\s*\[(.*?)\]', text, re.S).group(1)
-        args.append('        teachingFocus = listOf(' + ', '.join(map(quoted, swift_strings(focus))) + ')')
+        focus_match = re.search(r'teachingFocus:\s*\[(.*?)\]', text, re.S)
+        focuses = swift_strings(focus_match.group(1)) if focus_match else []
+        if len(focuses) != 6:
+            raise SystemExit(f'{path} must define exactly six teachingFocus stages.')
+        args.append('        teachingFocus = listOf(' + ', '.join(map(quoted, focuses)) + ')')
         overrides = []
         for line in text.splitlines():
             m = re.match(r'\s*"([^"]+)":\s*\.init(.*)', line)

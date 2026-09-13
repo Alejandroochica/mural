@@ -163,8 +163,8 @@ class ArchiveFieldsTests(unittest.TestCase):
             self.assertTrue(any('SessionRecord.foo' in f for f in failures))
             self.assertTrue(any('Models.kt' in f for f in failures))
 
-    def test_optional_swift_field_is_not_required(self):
-        # providerID is `String?` in Swift; a Kotlin data class lacking it must not fail.
+    def test_optional_swift_field_must_be_represented(self):
+        # Optional keys need a decoding default, but their stored values cannot be discarded.
         kotlin = self.KOTLIN_OK.replace(
             'var providerID: String? = null, var title', 'var title')
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,7 +172,8 @@ class ArchiveFieldsTests(unittest.TestCase):
             kotlin_path = pathlib.Path(tmp) / 'Models.kt'
             swift_path.write_text(self.SWIFT_OK)
             kotlin_path.write_text(kotlin)
-            self.assertEqual(ccp.check_archive_fields(swift_path, kotlin_path), [])
+            self.assertTrue(any('SessionRecord.providerID' in failure
+                                for failure in ccp.check_archive_fields(swift_path, kotlin_path)))
 
 
 class ArchiveFieldsReverseTests(unittest.TestCase):

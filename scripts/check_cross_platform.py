@@ -492,11 +492,12 @@ def check_archive_fields(swift_path, kotlin_path):
                 failures.append(format_failure(
                     'archive-fields', f'{struct_name}.{field_name} has no default in Kotlin but does not exist in Swift',
                     kotlin_path, kotlin_line, swift_path, struct_line))
-        for field_name, swift_line in required:
+        # Optional values can be absent in an archive, but must survive when present.
+        for field_name in sorted(swift_names):
             if field_name not in kotlin_set:
                 failures.append(format_failure(
-                    'archive-fields', f'{struct_name}.{field_name} is required in Swift but missing from the Kotlin data class',
-                    kotlin_path, kotlin_line, swift_path, swift_line))
+                    'archive-fields', f'{struct_name}.{field_name} is stored in Swift but missing from the Kotlin data class',
+                    kotlin_path, kotlin_line, swift_path, struct_line))
 
         variable = FIELDS_CALL_VARIABLE.get(struct_name)
         if not variable:

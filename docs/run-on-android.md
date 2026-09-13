@@ -40,7 +40,7 @@ Android exports use the same format, and iPhone can import them. There is no aut
 
 ## Build
 
-Install Java 17 and Android Studio or the official command-line tools. Install SDK Platform 35 and Build Tools 35.0.0. Set `ANDROID_HOME`, or create a private `android/local.properties` with `sdk.dir=/path/to/sdk`.
+Install Java 17 and Android Studio or the official command-line tools. Install SDK Platform 36 and Build Tools 35.0.0. Set `ANDROID_HOME`, or create a private `android/local.properties` with `sdk.dir=/path/to/sdk`.
 
 ```sh
 cd android

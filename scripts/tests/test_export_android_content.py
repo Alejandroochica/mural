@@ -47,7 +47,7 @@ extension LanguageModule {{
         lemmaGuidance: "Use base forms.",
         teachingFocus: [
             "Stage one.",
-            "Stage two."
+            "Stage two.", "Stage three.", "Stage four.", "Stage five.", "Stage six."
         ],
         topicPlaceholder: "Anything…",
         lookupUnavailableReply: "Not available.",
@@ -94,6 +94,14 @@ def write_core(root, names, extra_by_name=None):
 
 
 class ExportAndroidContentTests(unittest.TestCase):
+    def test_incomplete_teaching_progression_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = write_core(pathlib.Path(tmp), ['Norwegian'])
+            path = core / 'Languages/Norwegian.swift'
+            path.write_text(path.read_text().replace(', "Stage six."', ''))
+            with self.assertRaisesRegex(SystemExit, 'six teachingFocus'):
+                eac.generate(core)
+
     def test_discovers_modules_in_registry_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             core = write_core(pathlib.Path(tmp), ['Zulu', 'Alpha'])

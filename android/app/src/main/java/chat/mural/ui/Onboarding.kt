@@ -76,7 +76,7 @@ fun OnboardingScreen(
             .fillMaxSize()
             .background(
                 Brush.radialGradient(
-                    listOf(MuralColors.SurfaceBright, MuralColors.Night),
+                    listOf(MuralColors.SurfaceBright, MuralColors.Cream),
                     radius = 1_100f,
                 ),
             )
@@ -124,7 +124,7 @@ fun OnboardingScreen(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(MuralColors.Night.copy(alpha = .96f))
+                    .background(MuralColors.Cream.copy(alpha = .96f))
                     .navigationBarsPadding()
                     .padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -140,7 +140,7 @@ fun OnboardingScreen(
                         } else onComplete(languageId, meaningLanguage)
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp).testTag("onboarding-continue"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Night),
+                    colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Cream),
                 ) { Text(stringResource(if (step == 0) R.string.onboarding_continue_button else R.string.onboarding_choose_continue_button)) }
                 Text(
                     stringResource(if (step == 0) R.string.onboarding_pace_note_step0 else R.string.onboarding_pace_note_step1),
@@ -217,7 +217,7 @@ fun AIConsentDialog(onAgree: () -> Unit, onDecline: () -> Unit) {
         onDismissRequest = {},
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false),
     ) {
-        Surface(Modifier.fillMaxSize(), color = MuralColors.Night) {
+        Surface(Modifier.fillMaxSize(), color = MuralColors.Cream) {
             Column(
                 Modifier
                     .windowInsetsPadding(WindowInsets.safeDrawing)
@@ -248,7 +248,7 @@ fun AIConsentDialog(onAgree: () -> Unit, onDecline: () -> Unit) {
                 Button(
                     onClick = onAgree,
                     modifier = Modifier.fillMaxWidth().height(56.dp).testTag("ai-consent-agree"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Night),
+                    colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Cream),
                 ) { Text(stringResource(R.string.consent_agree_button)) }
                 OutlinedButton(onClick = onDecline, modifier = Modifier.fillMaxWidth().height(52.dp).testTag("ai-consent-decline")) { Text(stringResource(R.string.consent_decline_button)) }
             }

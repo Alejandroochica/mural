@@ -21,6 +21,9 @@ import org.junit.After
 import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.text.AnnotatedString
 import chat.mural.core.Preferences
+import chat.mural.core.CloudAction
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.runner.RunWith
 
 /**
@@ -60,7 +63,14 @@ class MuralOnboardingTest {
         compose.onNodeWithTag("tab-talk").performClick()
         compose.onNodeWithTag("start-conversation").performClick()
         compose.onNodeWithTag("ai-consent-title").assertIsDisplayed()
+        compose.activityRule.scenario.recreate()
+        compose.waitForIdle()
+        compose.onNodeWithTag("ai-consent-title").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(CloudAction.StartVoice, ViewModelProvider(compose.activity)[MuralViewModel::class.java].pendingCloudAction)
+        }
         compose.onNodeWithTag("ai-consent-decline").performClick()
+        compose.runOnIdle { assertNull(ViewModelProvider(compose.activity)[MuralViewModel::class.java].pendingCloudAction) }
 
         compose.onNodeWithTag("tab-settings").performClick()
         compose.onNodeWithTag("settings-screen").assertIsDisplayed()

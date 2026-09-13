@@ -109,7 +109,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
         item {
             OutlinedTextField(
                 prefs.interests,
-                { vm.updatePreferences(prefs.copy(interests = it.take(600))) },
+                { vm.updatePreferences(prefs.copy(interests = it.take(500))) },
                 Modifier.fillMaxWidth(),
                 enabled = !vm.isRunning,
                 minLines = 2,

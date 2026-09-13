@@ -126,7 +126,7 @@ private fun ThemeCard(theme: ConversationTheme, index: Int, onClick: () -> Unit)
         color = MuralColors.Panels.getOrElse(theme.colorIndex) { MuralColors.Panels[index % MuralColors.Panels.size] },
     ) {
         Row(Modifier.padding(20.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(48.dp).background(MuralColors.Night.copy(alpha = .28f), CircleShape), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(48.dp).background(MuralColors.Cream.copy(alpha = .28f), CircleShape), contentAlignment = Alignment.Center) {
                 Text(themeGlyph(theme.id), style = MaterialTheme.typography.titleLarge)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -183,7 +183,7 @@ private fun CurrentTopicDialog(
                         Button(
                             onClick = { onDiscuss(brief) },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Night),
+                            colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Cream),
                         ) { Text(stringResource(R.string.topics_talk_about_button)) }
                     }
                 }

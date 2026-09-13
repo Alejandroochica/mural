@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
@@ -42,28 +42,28 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 object MuralColors {
-    val Night = Color(0xFF17110F)
-    val NightRaised = Color(0xFF211714)
-    val Surface = Color(0xFF2B1E19)
-    val SurfaceBright = Color(0xFF392720)
-    val Ink = Color(0xFFFFF4E6)
-    val Secondary = Color(0xFFCDB4A0)
-    val Orange = Color(0xFFFF8757)
-    val Peach = Color(0xFF713E32)
-    val Lilac = Color(0xFF51415F)
-    val Sage = Color(0xFF3C5141)
-    val Butter = Color(0xFF705B2E)
-    val Red = Color(0xFFFF8173)
+    val Cream = Color(0xFFFFF9EE)
+    val CreamRaised = Color(0xFFFFFDF8)
+    val Surface = Color(0xFFFFFFFF)
+    val SurfaceBright = Color(0xFFFFF2E6)
+    val Ink = Color(0xFF362A22)
+    val Secondary = Color(0xFF735B4A)
+    val Orange = Color(0xFFFF8A4D)
+    val Peach = Color(0xFFFFE3CF)
+    val Lilac = Color(0xFFEEE6FA)
+    val Sage = Color(0xFFEAEFD6)
+    val Butter = Color(0xFFFFF1C7)
+    val Red = Color(0xFFB34B3F)
     val Panels = listOf(Peach, Lilac, Sage, Butter)
 }
 
-private val MuralScheme = darkColorScheme(
+private val MuralScheme = lightColorScheme(
     primary = MuralColors.Orange,
-    onPrimary = MuralColors.Night,
+    onPrimary = MuralColors.Cream,
     primaryContainer = MuralColors.Peach,
     onPrimaryContainer = MuralColors.Ink,
     secondary = MuralColors.Secondary,
-    background = MuralColors.Night,
+    background = MuralColors.Cream,
     onBackground = MuralColors.Ink,
     surface = MuralColors.Surface,
     onSurface = MuralColors.Ink,
@@ -169,7 +169,7 @@ fun MuralOrb(
         drawPath(
             path,
             Brush.radialGradient(
-                colors = listOf(Color(0xFFFFF0BC), Color(0xFFFFA55E), MuralColors.Orange, Color(0xFF8F587F)),
+                colors = listOf(Color(0xFFFFF0BC), Color(0xFFFFA55E), MuralColors.Orange, Color(0xFFCBB5E8)),
                 center = Offset(center.x - side * .16f, center.y - side * .18f),
                 radius = side * .66f,
             ),

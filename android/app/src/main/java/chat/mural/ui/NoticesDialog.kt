@@ -46,7 +46,7 @@ fun NoticesDialog(onDismiss: () -> Unit) {
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = MuralColors.Night) {
+        Surface(Modifier.fillMaxSize(), color = MuralColors.Cream) {
             Column {
                 Row(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.settings_open_source_notices), style = MaterialTheme.typography.titleLarge,

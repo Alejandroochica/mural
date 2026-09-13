@@ -1,6 +1,7 @@
 package chat.mural.core
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -45,7 +46,7 @@ class FinalAssessmentQueue(
         val snapshot = session.copy(fragments = session.fragments.toMutableList(), assessments = session.assessments.toMutableList())
         val token = Any()
         val deadline = clock() + timeoutMillis
-        val request = scope.launch {
+        val request = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val result = assess(snapshot, passage)
                 if (jobs[snapshot.id]?.token !== token) return@launch
@@ -57,11 +58,13 @@ class FinalAssessmentQueue(
                 if (e is kotlinx.coroutines.CancellationException) throw e
             }
         }
-        val timer = scope.launch {
+        val timer = scope.launch(start = CoroutineStart.LAZY) {
             delay(timeoutMillis)
             if (jobs[snapshot.id]?.token === token) cancel(snapshot.id)
         }
         jobs[snapshot.id] = Pending(token, deadline, request, timer)
+        timer.start()
+        request.start()
         return true
     }
 

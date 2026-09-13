@@ -24,9 +24,12 @@ class LearningRepository(context: Context) {
             }
             ArchiveCodec.decode(output.toString(Charsets.UTF_8.name()))
         }
-        archive.sessions.filter { it.endedAt == null }.forEach {
-            it.endedAt = nowSeconds(); it.endReason = "App closed before finalization"
+        val unfinished = archive.sessions.filter { it.endedAt == null }
+        val recoveredAt = nowSeconds()
+        unfinished.forEach {
+            it.endedAt = recoveredAt; it.endReason = "App closed before finalization"
         }
+        if (unfinished.isNotEmpty()) save(archive)
         return archive
     }
     fun save(archive: Archive) {

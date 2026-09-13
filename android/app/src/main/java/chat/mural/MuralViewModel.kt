@@ -39,6 +39,8 @@ internal fun errorNeedsKeySetup(e: Throwable): Boolean =
     e is APIClient.APIException.MissingKey || (e is APIClient.APIException.Http && e.status == 401)
 
 class MuralViewModel(application: Application) : AndroidViewModel(application) {
+    // Keep intent, not an Activity-capturing callback, while the learner reviews consent.
+    var pendingCloudAction: CloudAction? = null
     var archive by mutableStateOf(Archive()); private set
     var session by mutableStateOf<SessionRecord?>(null); private set
     var state by mutableStateOf("idle"); private set
@@ -126,11 +128,17 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun clone(s: SessionRecord): SessionRecord = json.decodeFromString(json.encodeToString(s))
+    private fun clone(s: SessionRecord): SessionRecord = s.copy(
+        fragments = s.fragments.map { it.copy(previousTexts = it.previousTexts.toList()) }.toMutableList(),
+        assessments = s.assessments.map { it.copy(words = it.words.toList()) }.toMutableList(),
+        translations = s.translations.toMutableMap(),
+        topics = s.topics.map { it.copy(sources = it.sources.toList()) }.toMutableList(),
+    )
     private fun persist() {
         if (!storageReady) return
-        // Isolate the queued snapshot from all mutable domain model lists.
-        writes.trySend(json.decodeFromString(json.encodeToString(archive)))
+        // Saved sessions are replaced, never mutated. Copy the container; serialize on IO.
+        // This avoids encoding the entire history twice for each transcript delta.
+        writes.trySend(archive.copy(sessions = archive.sessions.toMutableList(), preferences = archive.preferences.copy()))
     }
     private fun save(s: SessionRecord) {
         archive = archive.copy(sessions = (archive.sessions.filterNot { it.id == s.id } + clone(s)).toMutableList())
@@ -175,6 +183,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (isRunning) return
         try { credentials.delete(); hasKey = false }
         catch (e: Exception) { presentError(e, R.string.error_key_delete_failed) }
+        finally { hasKey = credentials.hasKey }
     }
     fun updatePreferences(preferences: Preferences) {
         if (isRunning || !storageReady) return

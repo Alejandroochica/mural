@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import chat.mural.MuralViewModel
 import chat.mural.R
+import chat.mural.core.CloudAction
 
 private data class Tab(val label: String, val glyph: String, val tag: String)
 
@@ -49,18 +50,25 @@ fun MuralApp(
     val prefs = vm.archive.preferences
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showConsent by rememberSaveable { mutableStateOf(false) }
-    var pendingCloudAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-
-    fun withConsent(action: () -> Unit) {
-        if (vm.archive.preferences.aiConsentVersion == AI_CONSENT_VERSION) action()
+    fun perform(action: CloudAction) {
+        when (action) {
+            CloudAction.StartVoice -> onRequestMicrophone()
+            is CloudAction.SendTyped -> vm.sendTyped(action.text)
+            is CloudAction.Lookup -> vm.lookup(action.word, action.sentence)
+            is CloudAction.CurrentTopic -> vm.currentTopic(action.query)
+            CloudAction.Help -> vm.help()
+        }
+    }
+    fun withConsent(action: CloudAction) {
+        if (vm.archive.preferences.aiConsentVersion == AI_CONSENT_VERSION) perform(action)
         else {
-            pendingCloudAction = action
+            vm.pendingCloudAction = action
             showConsent = true
         }
     }
 
     MuralTheme {
-        Surface(Modifier.fillMaxSize(), color = MuralColors.Night) {
+        Surface(Modifier.fillMaxSize(), color = MuralColors.Cream) {
             if (!prefs.hasOnboarded) {
                 OnboardingScreen(prefs.learningLanguageID, prefs.meaningLanguage) { language, meaning ->
                     vm.selectLanguage(language)
@@ -73,7 +81,7 @@ fun MuralApp(
                             aiConsentVersion = null,
                         ),
                     )
-                    pendingCloudAction = null
+                    vm.pendingCloudAction = null
                     showConsent = true
                 }
             } else {
@@ -84,7 +92,7 @@ fun MuralApp(
                     Tab(stringResource(R.string.settings_tab_title), "≡", "tab-settings"),
                 )
                 Scaffold(
-                    containerColor = MuralColors.Night,
+                    containerColor = MuralColors.Cream,
                     contentWindowInsets = WindowInsets.safeDrawing,
                     topBar = {
                         Row(
@@ -97,7 +105,7 @@ fun MuralApp(
                         }
                     },
                     bottomBar = {
-                        NavigationBar(containerColor = MuralColors.NightRaised) {
+                        NavigationBar(containerColor = MuralColors.CreamRaised) {
                             tabs.forEachIndexed { index, item ->
                                 NavigationBarItem(
                                     selected = tab == index,
@@ -115,20 +123,20 @@ fun MuralApp(
                             0 -> TalkScreen(
                                 vm = vm,
                                 microphoneMessage = microphoneMessage,
-                                onMicrophone = { withConsent(onRequestMicrophone) },
+                                onMicrophone = { withConsent(CloudAction.StartVoice) },
                                 onOpenAppSettings = onOpenAppSettings,
-                                onSendTyped = { text -> withConsent { vm.sendTyped(text) } },
-                                onLookup = { word, sentence -> withConsent { vm.lookup(word, sentence) } },
-                                onHelp = { withConsent(vm::help) },
+                                onSendTyped = { text -> withConsent(CloudAction.SendTyped(text)) },
+                                onLookup = { word, sentence -> withConsent(CloudAction.Lookup(word, sentence)) },
+                                onHelp = { withConsent(CloudAction.Help) },
                             )
                             1 -> TopicsScreen(
                                 vm,
                                 onChoose = { tab = 0 },
-                                onCurrentTopic = { query -> withConsent { vm.currentTopic(query) } },
+                                onCurrentTopic = { query -> withConsent(CloudAction.CurrentTopic(query)) },
                             )
                             2 -> WordsScreen(vm)
                             else -> SettingsScreen(vm, onExport, onImport, onReviewConsent = {
-                                pendingCloudAction = null
+                                vm.pendingCloudAction = null
                                 showConsent = true
                             })
                         }
@@ -140,12 +148,13 @@ fun MuralApp(
                 onAgree = {
                     vm.updatePreferences(vm.archive.preferences.copy(aiConsentVersion = AI_CONSENT_VERSION))
                     showConsent = false
-                    pendingCloudAction?.invoke()
-                    pendingCloudAction = null
+                    val action = vm.pendingCloudAction
+                    vm.pendingCloudAction = null
+                    action?.let(::perform)
                 },
                 onDecline = {
                     showConsent = false
-                    pendingCloudAction = null
+                    vm.pendingCloudAction = null
                 },
             )
 

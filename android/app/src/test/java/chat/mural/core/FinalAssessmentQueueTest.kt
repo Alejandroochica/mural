@@ -1,6 +1,8 @@
 package chat.mural.core
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.TestScope
@@ -13,6 +15,21 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FinalAssessmentQueueTest {
+    @Test fun immediateAssessmentIsDeliveredAndRemovedFromPending() {
+        val session = ended()
+        val passage = session.passages.last()
+        val queue = FinalAssessmentQueue(CoroutineScope(Dispatchers.Unconfined)) { snapshot, _ ->
+            FinalAssessmentResult(snapshot.id, snapshot.languageID,
+                Assessment(passage.id, passage.revisionKey, Outcome.success, 1, "Next", "A word", emptyList()))
+        }
+        var received = 0
+        queue.onResult = { received++ }
+        assertTrue(queue.submit(session))
+        assertEquals(1, received)
+        assertFalse(queue.isPending(session.id))
+        queue.cancelAll()
+    }
+
     private class Provider {
         val pending = ArrayDeque<Triple<SessionRecord, Passage, CompletableDeferred<FinalAssessmentResult>>>()
         suspend fun assess(session: SessionRecord, passage: Passage): FinalAssessmentResult {
