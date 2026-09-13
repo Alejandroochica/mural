@@ -154,11 +154,12 @@ export function createApp(services: Services) {
   });
   app.post('/v1/auth/exchange', { bodyLimit: 20_000 }, async request => {
     const body = objectBody(request), provider = stringField(body, 'provider', 10);
-    if (Object.keys(body).some(key => !['provider', 'idToken', 'challengeID'].includes(key))) throw new ServiceError('invalid_request');
+    if (Object.keys(body).some(key => !['provider', 'idToken', 'challengeID', 'expectedAccountID'].includes(key))) throw new ServiceError('invalid_request');
     if (provider !== 'google' && provider !== 'apple') throw new ServiceError('invalid_identity_provider');
     // Apple account creation cannot be enabled before account deletion can revoke Apple authorization.
     if (provider === 'apple' && !services.appleRevoker) throw new ServiceError('apple_sign_in_not_ready', 503);
-    return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth, services.accounts?.identityVerifier);
+    const expectedAccountID = body.expectedAccountID === undefined ? undefined : uuid(stringField(body, 'expectedAccountID', 36));
+    return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth, services.accounts?.identityVerifier, expectedAccountID);
   });
   app.get('/v1/account', async request => accountProfile(db, request.headers.authorization));
   app.get('/v1/minutes', async request => minuteBalance(db, await authenticate(db, request.headers.authorization, true)));

@@ -82,15 +82,15 @@ before(async () => { if (db) { await db.query(`CREATE SCHEMA ${schema}`); await 
 beforeEach(async () => { if (db) await db.query('TRUNCATE accounts CASCADE'); });
 after(async () => { if (db) { try { await db.query(`DROP SCHEMA ${schema} CASCADE`); } finally { await db.end(); } } });
 const integration = (name: string, fn: () => Promise<void>) => test(name, { skip: !db && 'Set TEST_DATABASE_URL.' }, fn);
-async function seed(reservedMilliseconds = 600_000) {
+async function seed(reservedMilliseconds = 600_000, earnedTime = false) {
   const account = randomUUID(), sessionID = randomUUID(), reservationID = randomUUID();
   await db!.query('INSERT INTO accounts(id,is_guest) VALUES($1,true)', [account]);
   await transaction(db!, async sql => {
     await appendMinuteEntry(sql, account, `seed:${account}`, 'gift', reservedMilliseconds, 0);
     await appendMinuteEntry(sql, account, `reserve:${account}`, 'reserve', 0, reservedMilliseconds);
     await sql.query('INSERT INTO minute_reservations(id,account_id,idempotency_key,amount_ms) VALUES($1,$2,$3,$4)', [reservationID, account, randomUUID(), reservedMilliseconds]);
-    await sql.query(`INSERT INTO hosted_sessions(id,account_id,idempotency_key,minute_reservation_id,reserved_ms,rate_version,state,deadline,funding_exposure_nano)
-      VALUES($1,$2,$3,$4,$5,'test','active',now()+interval '10 minutes',500000000)`, [sessionID, account, randomUUID(), reservationID, reservedMilliseconds]);
+    await sql.query(`INSERT INTO hosted_sessions(id,account_id,idempotency_key,minute_reservation_id,reserved_ms,rate_version,state,deadline,funding_exposure_nano,minimum_charge_ms)
+      VALUES($1,$2,$3,$4,$5,'test','active',now()+interval '10 minutes',500000000,$6)`, [sessionID, account, randomUUID(), reservationID, reservedMilliseconds, earnedTime ? 15_000 : 0]);
   });
   const transport = new FakeResponses();
   return { account, sessionID, reservationID, transport, controller: (extra: Partial<HostedHelperConfig> = {}) => new HostedHelpers(db!, transport, config([account], extra)) };
@@ -315,12 +315,12 @@ integration('expiry frees unused budget but keeps settled cost and unresolved ho
 });
 
 integration('helper runtime privileges allow settlement but forbid rewriting budgets, attempts or entitlements', async () => {
-  const f = await seed(), role = `helper_runtime_${randomUUID().replaceAll('-', '')}`;
+  const f = await seed(600_000, true), role = `helper_runtime_${randomUUID().replaceAll('-', '')}`;
   await db!.query(`CREATE ROLE ${role}; GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
   const grants = await readFile(new URL('../operations/hosted-helper-runtime-grants.sql', import.meta.url), 'utf8');
   await db!.query(grants.replaceAll('mural_runtime', role));
   // SELECT FOR UPDATE on an owned voice row requires an UPDATE privilege, already held by the voice runtime.
-  await db!.query(`GRANT UPDATE(state,deadline) ON hosted_sessions TO ${role}`);
+  await db!.query(`GRANT UPDATE(state,deadline,charged_ms) ON hosted_sessions TO ${role}`);
   const runtimeURL = new URL(databaseURL!); runtimeURL.searchParams.set('options', `-c search_path=${schema} -c role=${role}`);
   const runtime = connectDatabase(runtimeURL.toString());
   try {
@@ -330,9 +330,70 @@ integration('helper runtime privileges allow settlement but forbid rewriting bud
     await runtime.query("UPDATE hosted_sessions SET state='active',deadline=now()+interval '10 minutes' WHERE id=$1", [f.sessionID]);
     assert.equal((await runtime.query('SELECT activation_pending FROM hosted_helper_sessions')).rows[0].activation_pending, false);
     await gateway.request(f.account, f.sessionID, input());
+    await runtime.query("UPDATE hosted_sessions SET state='closed',charged_ms=15000 WHERE id=$1", [f.sessionID]);
+    assert.equal((await runtime.query('SELECT post_close_budget_nano,liability_nano FROM hosted_helper_sessions')).rows[0].liability_nano,'25000000');
     for (const statement of ['DELETE FROM hosted_helper_requests', 'TRUNCATE hosted_helper_requests',
       'UPDATE hosted_helper_requests SET hold_nano=1', 'UPDATE hosted_helper_sessions SET budget_nano=1',
       "UPDATE hosted_helper_sessions SET expires_at=now()+interval '1 hour'", 'UPDATE hosted_helper_sessions SET activation_pending=true',
+      'UPDATE hosted_helper_sessions SET earned_time=false', 'UPDATE hosted_helper_sessions SET post_close_budget_nano=999999999',
+      'UPDATE hosted_helper_sessions SET requests_per_minute=60',
       'UPDATE minute_reservations SET amount_ms=999999']) await assert.rejects(runtime.query(statement), /permission denied/);
   } finally { await runtime.end(); await db!.query(`DROP OWNED BY ${role}; DROP ROLE ${role}`); }
+});
+
+integration('earned helpers cannot front-load a ten-minute reservation and grow only from authoritative voice time', async () => {
+  const f = await seed(600_000,true), gateway=f.controller({helperBudgetNanoPerMinute:50_000_000n});
+  await transaction(db!,sql=>gateway.reserveSessionBudget(sql,f.account,f.sessionID));
+  const large=input({instructions:'a'.repeat(16_384),input:'b'.repeat(24_576)});
+  await assert.rejects(gateway.request(f.account,f.sessionID,large),{code:'helper_budget_exhausted'});
+  assert.equal(f.transport.calls.length,0);
+  assert.equal(await hostedHelperExposure(db!),500_000_000n);
+  await db!.query('UPDATE hosted_sessions SET observed_ms=30000 WHERE id=$1',[f.sessionID]);
+  await gateway.request(f.account,f.sessionID,large);
+  assert.equal(f.transport.calls.length,1);
+  await db!.query("UPDATE hosted_sessions SET state='closed',charged_ms=30000 WHERE id=$1",[f.sessionID]);
+  await db!.query("UPDATE minute_reservations SET state='settled',used_ms=30000 WHERE id=$1",[f.reservationID]);
+  assert.equal(await hostedHelperExposure(db!),25_000_000n);
+  await f.controller({helperBudgetNanoPerMinute:1_000_000_000n}).request(f.account,f.sessionID,input());
+  assert.equal(await hostedHelperExposure(db!),25_000_000n);
+  await assert.rejects(db!.query('UPDATE hosted_helper_sessions SET post_close_budget_nano=budget_nano'),/immutable/);
+});
+
+integration('earned request limits persist across gateways and do not borrow unconsumed voice time', async () => {
+  const f=await seed(600_000,true), gateway=f.controller({maxRequestsPerMinute:6,helperBudgetNanoPerMinute:50_000_000n});
+  await gateway.request(f.account,f.sessionID,input());
+  await gateway.request(f.account,f.sessionID,input());
+  await assert.rejects(f.controller({maxRequestsPerMinute:60}).request(f.account,f.sessionID,input()),{code:'helper_session_limit'});
+  await db!.query('UPDATE hosted_sessions SET observed_ms=30000 WHERE id=$1',[f.sessionID]);
+  await gateway.request(f.account,f.sessionID,input());
+  assert.equal(f.transport.calls.length,3);
+});
+
+integration('sub-minimum residues cannot spend the full fifteen-second helper allowance', async () => {
+  const f=await seed(2_000,true), gateway=f.controller({helperBudgetNanoPerMinute:50_000_000n});
+  await assert.rejects(gateway.request(f.account,f.sessionID,input()),{code:'helper_budget_exhausted'});
+  assert.equal(f.transport.calls.length,0);
+  await db!.query("UPDATE hosted_sessions SET state='closed',charged_ms=2000 WHERE id=$1",[f.sessionID]);
+  await db!.query("UPDATE minute_reservations SET state='settled',used_ms=2000 WHERE id=$1",[f.reservationID]);
+  await assert.rejects(gateway.request(f.account,f.sessionID,input({purpose:'assessment',schema:schemaValue})),{code:'helper_budget_exhausted'});
+  assert.equal(f.transport.calls.length,0);
+});
+
+integration('final close and expiry preserve pending and uncertain earned-helper costs without refreshing their window', async () => {
+  const f=await seed(600_000,true), gateway=f.controller({postSessionMilliseconds:0,helperBudgetNanoPerMinute:50_000_000n});
+  let finish: (value:unknown)=>void=()=>{};
+  f.transport.handler=()=>new Promise(resolve=>{finish=resolve;});
+  const request=input(), pending=gateway.request(f.account,f.sessionID,request);
+  await waitFor(()=>f.transport.calls.length===1);
+  const hold=BigInt((await db!.query('SELECT hold_nano FROM hosted_helper_requests')).rows[0].hold_nano);
+  await db!.query("UPDATE hosted_sessions SET state='closed',charged_ms=15000 WHERE id=$1",[f.sessionID]);
+  await db!.query("UPDATE minute_reservations SET state='settled',used_ms=15000 WHERE id=$1",[f.reservationID]);
+  assert.equal(await hostedHelperExposure(db!),12_500_000n);
+  await gateway.expireBudgets(); assert.equal(await hostedHelperExposure(db!),hold);
+  finish({usage:null});
+  await assert.rejects(pending,{code:'helper_response_uncertain'});
+  await f.controller().expireBudgets(); assert.equal(await hostedHelperExposure(db!),hold);
+  await assert.rejects(f.controller().request(f.account,f.sessionID,request),{code:'helper_request_already_attempted'});
+  await assert.rejects(f.controller().request(f.account,f.sessionID,input()),{code:'helper_session_window_closed'});
+  assert.equal(f.transport.calls.length,1);
 });

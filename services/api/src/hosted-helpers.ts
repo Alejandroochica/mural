@@ -198,18 +198,22 @@ export class HostedHelpers {
         throw new ServiceError('helper_session_window_closed', 409);
       if (!budget) budget = await this.ensureBudget(sql, session);
       if (budget.rate_version !== HOSTED_HELPER_RATE_VERSION) throw new ServiceError('helper_rate_review_required', 503);
+      const earned = budget.earned_time ? earnedMilliseconds(session) : Number(session.reserved_ms);
+      const available = budget.earned_time ? BigInt(earned) * BigInt(budget.per_minute_nano) / 60_000n : BigInt(budget.budget_nano);
+      const requestLimit = budget.earned_time ? Math.min(budget.request_limit,
+        Math.max(1, Math.ceil(earned * budget.requests_per_minute / 60_000))) : budget.request_limit;
       const counts = (await sql.query(`SELECT count(*)::integer AS attempts,
         count(*) FILTER(WHERE search_requested)::integer AS searches,
         count(*) FILTER(WHERE state<>'settled' AND active_until>now())::integer AS pending,
         COALESCE(sum(CASE WHEN state='settled' THEN cost_nano ELSE hold_nano END),0) AS exposure
         FROM hosted_helper_requests WHERE session_id=$1`, [sessionID])).rows[0];
-      if (counts.attempts >= budget.request_limit || (input.search && counts.searches >= budget.search_limit)) throw new ServiceError('helper_session_limit', 429);
+      if (counts.attempts >= requestLimit || (input.search && counts.searches >= budget.search_limit)) throw new ServiceError('helper_session_limit', 429);
       const pendingGlobal = Number((await sql.query("SELECT count(*) AS total FROM hosted_helper_requests WHERE state<>'settled' AND active_until>now()")).rows[0].total);
       if (counts.pending >= budget.concurrency_limit || pendingGlobal >= this.config.maxConcurrentGlobal) throw new ServiceError('helper_concurrency_limit', 429);
       const inputCeiling = Buffer.byteLength(JSON.stringify(providerBody)) + budget.framing_tokens + (input.search ? budget.search_input_tokens : 0);
       const hold = hostedHelperCost({ inputTokens: inputCeiling, cachedInputTokens: 0, cacheWriteTokens: inputCeiling,
         outputTokens: providerBody.max_output_tokens, searchCalls: input.search ? 1 : 0 });
-      if (BigInt(counts.exposure) + hold > BigInt(budget.budget_nano)) throw new ServiceError('helper_budget_exhausted', 429);
+      if (BigInt(counts.exposure) + hold > available) throw new ServiceError('helper_budget_exhausted', 429);
       const activeUntil = new Date(now + Number(budget.timeout_ms) + 5000);
       await sql.query(`INSERT INTO hosted_helper_requests(request_id,session_id,purpose,search_requested,input_token_ceiling,output_token_ceiling,hold_nano,active_until)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [input.requestID, sessionID, input.purpose, Boolean(input.search), inputCeiling, providerBody.max_output_tokens, hold.toString(), activeUntil]);
@@ -220,17 +224,23 @@ export class HostedHelpers {
     const previous = (await sql.query('SELECT * FROM hosted_helper_sessions WHERE session_id=$1 FOR UPDATE', [session.id])).rows[0];
     if (previous) return previous;
     const amount = (BigInt(session.reserved_ms) * this.config.helperBudgetNanoPerMinute + 59_999n) / 60_000n;
+    const earnedTime = Number(session.minimum_charge_ms) > 0;
+    const postClose = earnedTime && session.state === 'closed'
+      ? BigInt(earnedMilliseconds(session)) * this.config.helperBudgetNanoPerMinute / 60_000n : null;
+    const liability = postClose ?? amount;
     const voice = BigInt((await sql.query('SELECT COALESCE(sum(funding_exposure_nano),0) AS total FROM hosted_sessions')).rows[0].total);
-    if (voice + await hostedHelperExposure(sql) + amount > this.config.aggregateFundingCapNano)
+    if (voice + await hostedHelperExposure(sql) + liability > this.config.aggregateFundingCapNano)
       throw new ServiceError('hosted_funding_cap_reached', 503);
     return (await sql.query(`INSERT INTO hosted_helper_sessions(session_id,reserved_ms,per_minute_nano,budget_nano,liability_nano,
-      request_limit,search_limit,concurrency_limit,post_session_ms,framing_tokens,search_input_tokens,timeout_ms,rate_version,activation_pending,expires_at)
-      VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      request_limit,search_limit,concurrency_limit,post_session_ms,framing_tokens,search_input_tokens,timeout_ms,rate_version,activation_pending,expires_at,
+      earned_time,requests_per_minute,post_close_budget_nano)
+      VALUES($1,$2,$3,$4,$15,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$16,$17,$18) RETURNING *`,
     [session.id, session.reserved_ms, this.config.helperBudgetNanoPerMinute.toString(), amount.toString(),
       Math.max(1, Math.ceil(Number(session.reserved_ms) * this.config.maxRequestsPerMinute / 60_000)), this.config.maxSearchesPerSession,
       this.config.maxConcurrentPerSession, this.config.postSessionMilliseconds, this.config.inputFramingTokenAllowance, this.config.searchInputTokenAllowance,
       this.config.timeoutMilliseconds, HOSTED_HELPER_RATE_VERSION, session.state === 'creating',
-      new Date(session.deadline.getTime() + this.config.postSessionMilliseconds)])).rows[0];
+      new Date(session.deadline.getTime() + this.config.postSessionMilliseconds), liability.toString(), earnedTime,
+      this.config.maxRequestsPerMinute, postClose?.toString() ?? null])).rows[0];
   }
   private async uncertain(requestID: string) {
     // A failed write leaves 'pending'. Both states retain funding; concurrency expires at active_until.
@@ -267,8 +277,15 @@ export class HostedHelpers {
 async function refreshLiability(sql: PoolClient, budget: any): Promise<void> {
   const value = BigInt((await sql.query(`SELECT COALESCE(sum(CASE WHEN state='settled' THEN cost_nano ELSE hold_nano END),0) AS total
     FROM hosted_helper_requests WHERE session_id=$1`, [budget.session_id])).rows[0].total);
-  const amount = budget.state === 'open' && BigInt(budget.budget_nano) > value ? BigInt(budget.budget_nano) : value;
+  const allowance = BigInt(budget.post_close_budget_nano ?? budget.budget_nano);
+  const amount = budget.state === 'open' && allowance > value ? allowance : value;
   await sql.query('UPDATE hosted_helper_sessions SET liability_nano=$2 WHERE session_id=$1', [budget.session_id, amount.toString()]);
+}
+function earnedMilliseconds(session: any): number {
+  const value = session.state === 'closed' ? session.charged_ms : Math.max(Number(session.minimum_charge_ms), Number(session.observed_ms));
+  if (value === null || !Number.isSafeInteger(Number(value)) || Number(value) < 0)
+    throw new ServiceError('helper_session_funding_unavailable', 409);
+  return Math.min(Number(session.reserved_ms), Number(value));
 }
 interface ObservedResponse { id: string; usage: HostedHelperUsage }
 function observedResponse(raw: unknown): ObservedResponse {

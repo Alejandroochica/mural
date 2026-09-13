@@ -31,11 +31,13 @@ This confirms the provider's server-control path on this account. It does not es
 
 The shared voice controller now supports either legacy money reservations or minute reservations. Eighteen HTTP/WebSocket integration tests passed against an isolated local PostgreSQL database, including exact minute settlement, guest balances without money wallets, short remainders, setup delay, duplicate creates, uncertain creation, final-usage regression, recovery, cutoff overrun, refunds during speech and sign-out. Voice admission reserves teaching funding in the same transaction, so an unfunded helper budget cannot leave a billed voice session running.
 
-Only authenticated provider usage settles time. Missing final usage retains the hold. Mural absorbs the provider's 15-second creation minimum and cutoff overrun in these controlled tests; it does not silently round the learner's consumed minutes up. Public funding still requires reviewed connection and helper budgets before activation.
+The original controlled tests used exact connected-time charging. That policy is superseded for new hosted-minute sessions by the owner's approved 15-second minimum. Final charges are capped by the reserved balance; existing sessions keep their original policy. A cancellation before any provider attempt costs zero. Unknown creation or missing final usage keeps the hold, and Mural still absorbs provider cutoff overrun.
+
+Teaching requests now earn their funding and request limits from authoritative charged time. Closing a short conversation immediately releases the unearned portion of its teaching reservation, while retaining its earned post-conversation allowance and any uncertain provider holds. This prevents repeated short starts from spending the full ten-minute teaching budget on every connection. Public activation still requires funded grant commitments, an overrun reserve and provider reconciliation.
 
 The restricted-runtime test also exercised guest-to-account transfer. Claim ownership can move, while device proof and original allowance remain protected from modification.
 
-The complete API suite passed 227 tests with no skips after the combined integration. These cover the helper HTTP boundary, private report submission, account management, guest grants, provider purchase verification and recovery after losing a Play order ID. A source secret scan found no credentials. Native purchase testing and deployed runtime checks remain separate gates.
+After the approved minimum-charge change, the complete API suite passed 238 tests with no skips, and TypeScript checks passed. Tests include 40 zero-length finalized sessions consuming one ten-minute grant, a final two-second balance, pre-provider cancellation, recovery before any provider attempt, earned teaching limits, post-close funding release, immutable earlier policy and wrong-account reauthentication. These use synthetic data and local provider doubles. The earlier source secret scan found no credentials; native purchase testing and deployed runtime checks remain separate gates.
 
 ## Guest beta decision
 

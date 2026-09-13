@@ -116,6 +116,33 @@ integration('Android-only configuration signs the same Google subject into its e
     assert.equal(replay.statusCode, 401);
   } finally { await service.close(); }
 });
+
+integration('conversation recovery renews only its owner without creating or signing out another account', async () => {
+  const ownerSubject = randomUUID(), otherSubject = randomUUID(), newSubject = randomUUID();
+  const owner = await session(ownerSubject), other = await session(otherSubject), service = app();
+  const countSessions = async () => Number((await db!.query('SELECT count(*) AS count FROM auth_sessions WHERE account_id=$1', [other.accountID])).rows[0].count);
+  const before = await countSessions();
+  try {
+    async function renew(subject: string, expectedAccountID: string) {
+      const challenge = await createChallenge(db!);
+      return service.inject({ method: 'POST', url: '/v1/auth/exchange', headers, payload: {
+        provider: 'google', challengeID: challenge.challengeID, idToken: await jwt(challenge.nonce, subject), expectedAccountID
+      } });
+    }
+    for (const subject of [otherSubject, newSubject]) {
+      const rejected = await renew(subject, owner.accountID);
+      assert.equal(rejected.statusCode, 409); assert.equal(rejected.json().error.code, 'same_account_required');
+      assert.ok(!rejected.body.includes('accessToken'));
+    }
+    assert.equal(await countSessions(), before);
+    assert.equal(await authenticate(db!, `Bearer ${other.accessToken}`), other.accountID);
+    assert.equal((await db!.query('SELECT 1 FROM identities WHERE provider=$1 AND subject=$2', ['google', newSubject])).rowCount, 0);
+    const accepted = await renew(ownerSubject, owner.accountID);
+    assert.equal(accepted.statusCode, 200); assert.equal(accepted.json().accountID, owner.accountID);
+    assert.equal(await authenticate(db!, `Bearer ${accepted.json().accessToken}`), owner.accountID);
+    assert.equal((await renew(ownerSubject, 'not-a-uuid')).statusCode, 400);
+  } finally { await service.close(); }
+});
 integration('Apple HTTP signup stays blocked without revocation support; enabled test adapter revokes before deletion', async () => {
   const blocked = app(), subject = randomUUID(), challenge = await createChallenge(db!);
   try {

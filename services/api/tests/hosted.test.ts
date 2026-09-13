@@ -35,7 +35,7 @@ async function fixture(cap = 2_000_000_000n, minuteAllowance?: number, helperBud
     await transaction(db, sql => appendMinuteEntry(sql, account, `minute-seed:${account}`, 'gift', minuteAllowance, 0));
   }
   const sockets = new Map<string, WebSocket>();
-  let creates = 0, hangups = 0, closes = 0, respondToClose = false, rejectCreate = false, seconds = 0, now = Date.now(), setupDelay = 0;
+  let creates = 0, hangups = 0, closes = 0, respondToClose = false, rejectCreate = false, cancelBeforeProvider = false, seconds = 0, now = Date.now(), setupDelay = 0;
   const payloads: unknown[] = [];
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer test-no-real-provider-key');
@@ -71,21 +71,26 @@ async function fixture(cap = 2_000_000_000n, minuteAllowance?: number, helperBud
       postSessionMilliseconds: 120_000, inputFramingTokenAllowance: 4096, searchInputTokenAllowance: 1_050_000,
       timeoutMilliseconds: 1000,
     });
+  const helperAdmission = { async reserveSessionBudget(sql: any, owner: string, id: string) {
+    await helpers?.reserveSessionBudget(sql, owner, id);
+    if (cancelBeforeProvider) await sql.query("UPDATE hosted_sessions SET state='closing',close_requested_at=now() WHERE id=$1", [id]);
+  } };
   let controller = new HostedVoice(db, provider, { accountAllowlist: new Set([account]), lifetimeFundingCapNano: cap,
     billingUnit: minuteAllowance === undefined ? 'nanoUSD' : 'milliseconds',
-    helpers, now: () => now, closeGraceMilliseconds: 20 });
+    helpers: helperAdmission, now: () => now, closeGraceMilliseconds: 20 });
   await controller.start();
   return { db, account, payloads, provider, get controller() { return controller; },
     get creates() { return creates; }, get hangups() { return hangups; }, get closes() { return closes; },
     set closeReplies(value: boolean) { respondToClose = value; }, set seconds(value: number) { seconds = value; },
     set rejectCreate(value: boolean) { rejectCreate = value; },
+    set cancelBeforeProvider(value: boolean) { cancelBeforeProvider = value; },
     set setupDelay(value: number) { setupDelay = value; }, get now() { return now; },
     advance(ms: number) { now += ms; },
     send(id: string, event: unknown) { sockets.get(id)!.send(JSON.stringify(event)); },
     disconnect(id: string) { sockets.get(id)!.terminate(); },
     async restart() { await controller.stop(); controller = new HostedVoice(db, provider,
       { accountAllowlist: new Set([account]), lifetimeFundingCapNano: cap,
-        billingUnit: minuteAllowance === undefined ? 'nanoUSD' : 'milliseconds', helpers, now: () => now, closeGraceMilliseconds: 20 }); await controller.start(); },
+        billingUnit: minuteAllowance === undefined ? 'nanoUSD' : 'milliseconds', helpers: helperAdmission, now: () => now, closeGraceMilliseconds: 20 }); await controller.start(); },
     async wallet() { return (await db.query('SELECT balance_nano,reserved_nano FROM wallets WHERE account_id=$1', [account])).rows[0]; },
     async minutes() { return (await db.query('SELECT balance_ms,reserved_ms FROM minute_wallets WHERE account_id=$1', [account])).rows[0]; },
     async cleanup() {
@@ -269,19 +274,23 @@ integration('regressing final usage does not settle or refund a hold; trusted re
     assert.equal((await f.controller.status(f.account, live.sessionID)).chargedNanoUSD, '29166667');
   } finally { await f.cleanup(); }
 });
-integration('minute mode reserves a guest remainder and charges exact connected time independently of provider cost', async () => {
+integration('minute mode snapshots a 15-second minimum and settles it once from trusted final usage', async () => {
   const f = await fixture(2_000_000_000n, 90_000);
   try {
     const live = await f.controller.create(f.account, 'minute-first-key', 'v=0', 'es-ES');
     assert.equal(live.reservedMilliseconds, 90_000);
+    assert.equal(live.minimumChargeMilliseconds, 15_000);
+    assert.equal(live.billingPolicy, 'connected-time-15s-minimum-v1');
     assert.deepEqual(await f.minutes(), { balance_ms: '90000', reserved_ms: '90000' });
     assert.equal(await f.wallet(), undefined);
     for (const seconds of [5, 5, 3]) f.send(live.providerSessionID, { type: 'session.usage.updated', usage: { seconds } });
     f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 5.25 } });
     await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
-    assert.deepEqual(await f.minutes(), { balance_ms: '84750', reserved_ms: '0' });
+    assert.deepEqual(await f.minutes(), { balance_ms: '75000', reserved_ms: '0' });
     const status = await f.controller.status(f.account, live.sessionID);
-    assert.equal(status.chargedMilliseconds, 5_250);
+    assert.equal(status.chargedMilliseconds, 15_000);
+    assert.equal(status.minimumChargeMilliseconds, 15_000);
+    assert.equal(status.billingPolicy, 'connected-time-15s-minimum-v1');
     assert.equal(status.providerCostNanoUSD, '12500000');
     assert.equal((await f.db.query("SELECT 1 FROM minute_entries WHERE kind='settle'")).rowCount, 1);
     await assert.rejects(f.controller.create(f.account, 'minute-first-key', 'v=0', 'es-ES'), { code: 'live_request_already_created' });
@@ -340,6 +349,95 @@ integration('short minute remainders receive a separate setup window and authori
     assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
   } finally { await f.cleanup(); }
 });
+integration('zero-second finalized sessions consume the minimum and cannot restart a ten-minute grant indefinitely', async () => {
+  const f = await fixture(2_000_000_000n, 600_000, 50_000_000n);
+  try {
+    for (let index=0; index<40; index++) {
+      const live = await f.controller.create(f.account, `zero-duration-${index}`, 'v=0', 'es-ES');
+      f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 0 } });
+      await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+      assert.equal((await f.controller.status(f.account, live.sessionID)).chargedMilliseconds, 15_000);
+    }
+    assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
+    assert.equal((await f.db.query('SELECT sum(provider_cost_nano) AS total FROM hosted_sessions')).rows[0].total, '500000000');
+    assert.equal((await f.db.query('SELECT sum(liability_nano) AS total FROM hosted_helper_sessions')).rows[0].total, '500000000');
+    await assert.rejects(f.controller.create(f.account, 'zero-duration-exhausted', 'v=0', 'es-ES'), { code: 'insufficient_minutes' });
+    assert.equal(f.creates, 40);
+  } finally { await f.cleanup(); }
+});
+integration('the final sub-minimum residue is charged once without a negative minute wallet', async () => {
+  const f = await fixture(2_000_000_000n, 2_000, 50_000_000n);
+  try {
+    const live = await f.controller.create(f.account, 'zero-small-residue', 'v=0', 'es-ES');
+    assert.equal(live.minimumChargeMilliseconds, 15_000);
+    f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 0 } });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.equal((await f.controller.status(f.account, live.sessionID)).chargedMilliseconds, 2_000);
+    assert.equal((await f.db.query('SELECT liability_nano FROM hosted_helper_sessions')).rows[0].liability_nano, '1666666');
+    assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
+  } finally { await f.cleanup(); }
+});
+integration('pre-provider cancellation releases all funding and records no minimum or provider charge', async () => {
+  const f = await fixture(2_000_000_000n, 600_000, 50_000_000n);
+  try {
+    f.cancelBeforeProvider = true;
+    await assert.rejects(f.controller.create(f.account, 'cancel-before-attempt', 'v=0', 'es-ES'), { code: 'live_session_cancelled' });
+    assert.equal(f.creates, 0);
+    assert.deepEqual(await f.minutes(), { balance_ms: '600000', reserved_ms: '0' });
+    const row = (await f.db.query('SELECT state,charged_ms,provider_cost_nano,funding_exposure_nano,provider_attempted_at FROM hosted_sessions')).rows[0];
+    assert.deepEqual(row, { state:'closed', charged_ms:'0', provider_cost_nano:'0', funding_exposure_nano:'0', provider_attempted_at:null });
+    assert.equal((await f.db.query('SELECT liability_nano FROM hosted_helper_sessions')).rows[0].liability_nano, '0');
+    await f.restart(); assert.equal(f.creates, 0);
+  } finally { await f.cleanup(); }
+});
+integration('worker recovery cancels an admitted minute session that durably never attempted provider creation', async () => {
+  const f=await fixture(2_000_000_000n,60_000), id=randomUUID(), reservation=randomUUID();
+  try {
+    await transaction(f.db,async sql=>{
+      await appendMinuteEntry(sql,f.account,'orphan-minute-reserve','reserve',0,60_000);
+      await sql.query('INSERT INTO minute_reservations(id,account_id,idempotency_key,amount_ms) VALUES($1,$2,$3,60000)',[reservation,f.account,'orphan']);
+      await sql.query(`INSERT INTO hosted_sessions(id,account_id,idempotency_key,minute_reservation_id,reserved_ms,
+        rate_version,state,deadline,funding_exposure_nano,minimum_charge_ms)
+        VALUES($1,$2,'orphan',$3,60000,'test','creating',now()+interval '1 minute',50000000,15000)`,[id,f.account,reservation]);
+    });
+    await f.restart();
+    assert.equal(f.creates,0);
+    assert.deepEqual(await f.minutes(),{balance_ms:'60000',reserved_ms:'0'});
+    const status=await f.controller.status(f.account,id);
+    assert.equal(status.state,'closed');assert.equal(status.chargedMilliseconds,0);assert.equal(status.providerCostNanoUSD,'0');
+  } finally { await f.cleanup(); }
+});
+integration('a short close releases unearned helper liability before another conversation is admitted', async () => {
+  const f = await fixture(1_000_000_000n, 600_000, 50_000_000n);
+  try {
+    const first = await f.controller.create(f.account, 'earned-first', 'v=0', 'es-ES');
+    f.send(first.providerSessionID, { type: 'session.closed', usage: { seconds: 1 } });
+    await until(async () => (await f.controller.status(f.account, first.sessionID)).state === 'closed');
+    const budget = (await f.db.query('SELECT budget_nano,post_close_budget_nano,liability_nano FROM hosted_helper_sessions')).rows[0];
+    assert.deepEqual(budget, { budget_nano:'500000000',post_close_budget_nano:'12500000',liability_nano:'12500000' });
+    const second = await f.controller.create(f.account, 'earned-second', 'v=0', 'es-ES');
+    assert.equal(second.reservedMilliseconds, 585_000);
+    assert.equal(f.creates, 2);
+  } finally { await f.cleanup(); }
+});
+integration('existing connected-time sessions retain their immutable original minimum policy', async () => {
+  const f = await fixture(2_000_000_000n, 60_000);
+  try {
+    const live = await f.controller.create(f.account, 'legacy-minute-policy', 'v=0', 'es-ES');
+    await assert.rejects(f.db.query('UPDATE hosted_sessions SET minimum_charge_ms=0 WHERE id=$1', [live.sessionID]), /immutable/);
+    // Represent a session that existed before migration014. Its copied policy must not be replaced on recovery.
+    await f.db.query('ALTER TABLE hosted_sessions DISABLE TRIGGER hosted_minimum_immutable');
+    await f.db.query('UPDATE hosted_sessions SET minimum_charge_ms=0 WHERE id=$1', [live.sessionID]);
+    await f.db.query('ALTER TABLE hosted_sessions ENABLE TRIGGER hosted_minimum_immutable');
+    await f.restart();
+    f.send(live.providerSessionID, { type:'session.closed',usage:{seconds:1} });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    const status = await f.controller.status(f.account, live.sessionID);
+    assert.equal(status.minimumChargeMilliseconds, 0); assert.equal(status.billingPolicy,'connected-time-only-v1');
+    assert.equal(status.chargedMilliseconds,1000);
+    assert.deepEqual(await f.minutes(),{balance_ms:'59000',reserved_ms:'0'});
+  } finally { await f.cleanup(); }
+});
 integration('refunding a minute purchase during speech closes and recovers released time atomically', async () => {
   const f = await fixture(2_000_000_000n, 0);
   try {
@@ -361,8 +459,8 @@ integration('refunding a minute purchase during speech closes and recovers relea
     await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
     assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
     const status = await purchases.status(f.account, order.orderID);
-    assert.equal(status.reversalOutstandingMilliseconds, 5_000);
-    assert.equal(status.reversedMilliseconds, 1_795_000);
+    assert.equal(status.reversalOutstandingMilliseconds, 15_000);
+    assert.equal(status.reversedMilliseconds, 1_785_000);
     assert.equal((await f.db.query('SELECT close_reason FROM hosted_sessions WHERE id=$1', [live.sessionID])).rows[0].close_reason, 'funding_reversed');
   } finally { await f.cleanup(); }
 });

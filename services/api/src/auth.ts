@@ -54,7 +54,7 @@ export async function createChallenge(db: Database) {
   return { challengeID: id, nonce, expiresInSeconds: 300 };
 }
 export async function exchangeIdentity(db: Database, provider: Provider, token: string, challengeID: string, config: AuthConfig,
-  verify: typeof verifyIdentity = verifyIdentity) {
+  verify: typeof verifyIdentity = verifyIdentity, expectedAccountID?: string) {
   const challenge = (await db.query('SELECT nonce_hash FROM auth_challenges WHERE id=$1 AND expires_at>now() AND used_at IS NULL', [challengeID])).rows[0];
   if (!challenge) throw new ServiceError('invalid_challenge', 401);
   const identity = await verify(provider, token, challenge.nonce_hash, config);
@@ -66,6 +66,8 @@ export async function exchangeIdentity(db: Database, provider: Provider, token: 
     // Serialize signup for one provider subject; never merge accounts by email.
     await sql.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${identity.provider}:${identity.subject}`]);
     let account = (await sql.query('SELECT account_id FROM identities WHERE provider=$1 AND subject=$2', [identity.provider, identity.subject])).rows[0]?.account_id;
+    // Recovery may renew only its original owner, before any new signup, grant or token is issued.
+    if (expectedAccountID !== undefined && account !== expectedAccountID) throw new ServiceError('same_account_required', 409);
     if (!account) {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-account-capacity'))");
       const count = Number((await sql.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL AND NOT is_guest')).rows[0].count);
