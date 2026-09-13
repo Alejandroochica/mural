@@ -13,3 +13,11 @@ Archive version 2 stores language IDs explicitly. Version 1 records migrate to N
 These are compiled modules. Adding one ships with an app update; there is no remote module download or extra service. Different scripts may require additional word-selection and layout work, and every new language needs a native-speaker teaching and pronunciation review.
 
 See [how to add a language](add-language.md) for the implementation steps.
+
+## Two native cores, one contract
+
+The Android client is a separate Kotlin/Compose app, not a shared build. `scripts/export_android_content.py` generates Android's language content (`Languages.kt`) from the Swift modules under `Core/Languages/`, so a module registered in `LanguageRegistry.all` reaches both platforms without being written twice.
+
+Everything else in the learning core is ported by hand, so `scripts/check_cross_platform.py` checks that the two ports stay in agreement: the teaching prompts sent to the model, a fixed table of shared numeric constants (recall spacing, evidence thresholds, session limits), and the required fields of the JSON backup archive. Golden fixtures under `Tests/Fixtures/cross-platform/` are read by both `swift test` and the Android unit tests, so a behavior change can be verified identically on both cores.
+
+An export is semantically, not byte-for-byte, compatible with what it describes: Swift's `JSONEncoder` sorts keys when writing an archive, while Kotlin does not attempt to reproduce that ordering. Backups exchanged between platforms are compared by decoding and re-validating, never by comparing raw bytes.
