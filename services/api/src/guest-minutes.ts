@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
 import { appendMinuteEntry, assertWelcomeBudget, lockMinuteWallet } from './minutes.js';
+import { reserveWelcomeFunding } from './welcome-funding.js';
 
 export interface GuestMinuteAttestor {
   // Verify a fresh server challenge bound to guest trial access, app identity and device.
@@ -33,6 +34,7 @@ export async function startGuestMinutes(db: Database, proof: unknown, attestor: 
       await assertWelcomeBudget(sql, policy, allowance);
       account = randomUUID();
       await sql.query('INSERT INTO accounts(id,is_guest) VALUES($1,true)', [account]);
+      await reserveWelcomeFunding(sql, account, allowance);
       await sql.query('INSERT INTO minute_welcome_claims(proof_reference,account_id,allowance_ms) VALUES($1,$2,$3)',
         [verified.deviceReference, account, allowance]);
       await appendMinuteEntry(sql, account, `welcome:${account}`, 'welcome', allowance, 0);

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
+import { reserveWelcomeFunding } from './welcome-funding.js';
 
 export interface MinuteAttestor {
   // Verify an unexpired, one-time proof bound to this authenticated account and purpose.
@@ -89,6 +90,7 @@ export async function claimWelcomeMinutes(db: Database, account: string, proof: 
     const allowance = Number(offer?.allowance_ms ?? 0);
     if (!allowance) throw new ServiceError('welcome_minutes_unavailable', 403);
     await assertWelcomeBudget(sql, policy, allowance);
+    await reserveWelcomeFunding(sql, account, allowance);
     await sql.query('INSERT INTO minute_welcome_claims(proof_reference,account_id,allowance_ms) VALUES($1,$2,$3)',
       [verified.deviceReference, account, allowance]);
     await appendMinuteEntry(sql, account, `welcome:${account}`, 'welcome', allowance, 0);

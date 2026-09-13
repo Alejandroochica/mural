@@ -9,6 +9,7 @@ import { applyMinuteCampaign, prepareMinuteCampaign, updateWelcomePolicy, welcom
 import { createChallenge, deleteAccount, digest, exchangeIdentity } from '../src/auth.js';
 import { createApp } from '../src/app.js';
 import { AuthAdmission } from '../src/auth-admission.js';
+import { welcomeFunding, updateWelcomeFunding } from '../src/welcome-funding.js';
 
 const databaseURL = process.env.TEST_DATABASE_URL;
 if (databaseURL && !new URL(databaseURL).pathname.endsWith('_test')) throw new Error('Use an isolated test database.');
@@ -17,6 +18,7 @@ async function fixture() {
   const schema = `minutes_${randomUUID().replaceAll('-', '')}`, url = new URL(databaseURL!);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const db = connectDatabase(url.toString()); await db.query(`CREATE SCHEMA ${schema}`); await migrate(db);
+  await updateWelcomeFunding(db, { ...await welcomeFunding(db), dailyBudgetMinor: 100_000, lifetimeBudgetMinor: 1_000_000 }, 'test-operator', 'Isolated test funding');
   return { db,
     async account() {
       const id = randomUUID();

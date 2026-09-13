@@ -4,7 +4,7 @@ Updated 13 September 2026. This branch integrates the Android contribution from 
 
 ## Verified foundation
 
-- Backend: 98 tests pass against an isolated PostgreSQL database, with no skips. Tests cover guest allowance transfer, duplicate claims, concurrent budget limits, grant previews, interrupted bulk grants, minute reservations, account deletion and the existing account/payment boundaries.
+- Backend: 102 tests pass against an isolated PostgreSQL database, with no skips. Tests cover guest allowance transfer, duplicate claims, concurrent minute and dollar budget limits, UTC budget rollover, grant previews, interrupted bulk grants, minute reservations, account deletion and the existing account/payment boundaries.
 - Android: 68 JVM tests pass; the debug APK builds; Android Lint reports no errors. Seven instrumented tests pass on an ARM64 Pixel 9 emulator running Android 16/API 36. These include native library checks, secure credential storage, onboarding, consent across Activity recreation, settings and test-data isolation.
 - Shared behavior: 24 Python tests pass. Generated language content and the cross-platform compatibility checks agree.
 - iOS: the integrated baseline passes 73 Swift core tests. The prior iPhone language release's live checks remain documented in [validation](validation.md); those checks were not repeated on an Android phone.

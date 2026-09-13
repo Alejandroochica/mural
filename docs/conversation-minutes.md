@@ -12,6 +12,8 @@ The first verified guest trial receives the current allowance without collecting
 
 Allocation budgets cap the amount of welcome time issued, measured on UTC days. They are not a real-time dollar spending cap. Existing grants can be used later, and helper/provider costs require separate operational budgets and session cutoffs. Reducing an allocation budget does not confiscate time already issued.
 
+A separate funding policy reserves a conservative dollar cost for every new welcome grant. It has daily and lifetime budgets, starts with zero funding, and retains each grant's original reserve when its rate changes. Dollar and minute limits are checked in the same transaction as the grant. Repeated claims, guest-to-member transfer and spending time cannot replenish either budget. This bounds new funding commitments; provider usage still needs enforced session and helper limits.
+
 Signing in transfers the guest's remaining balance after the current conversation settles. For example, using three of ten minutes as a guest leaves seven minutes after signup. Transfer requires both the signed-in account and the guest session, is safe to retry, and retires the old guest session. An account that already claimed free time cannot stack another device's trial. The old experimental trial route must not be advertised as the finished guest flow.
 
 ## Gifts

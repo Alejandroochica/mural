@@ -6,6 +6,36 @@ Use an operator database role permitted to maintain minute policy and grants. Th
 
 ## Change the allowance for new accounts
 
+Configure funding separately from the number of minutes. Both limits must permit a grant. Read the current dollar policy with:
+
+```sh
+npm run minutes-admin -- funding
+```
+
+Use its version in a private request file. Amounts below are **US cents**. This staging example reserves ten cents per granted minute, with five dollars per day and twenty dollars in total:
+
+```json
+{
+  "actor": "mural-operator",
+  "reason": "Staging funding limits",
+  "policy": {
+    "version": 1,
+    "currency": "USD",
+    "reserveCostPerMinuteMinor": 10,
+    "dailyBudgetMinor": 500,
+    "lifetimeBudgetMinor": 2000
+  }
+}
+```
+
+```sh
+npm run minutes-admin -- set-funding < /private/path/funding.json
+```
+
+This reserve must cover voice, teaching helpers and connection overhead. It is an internal funding allowance, not the consumer price or a measured provider charge. Changing its rate affects new grants only. Previously reserved costs remain counted after a learner uses their time, signs in or deletes their account. Lowering a budget below the amount already reserved pauses new grants without changing issued minutes.
+
+The shipped funding budgets are zero. Do not enable public trials until real provider cutoffs and helper limits are verified. A dollar allocation budget does not prevent all existing users from spending previously granted time on the same day.
+
 Read the current policy:
 
 ```sh

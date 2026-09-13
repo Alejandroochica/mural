@@ -8,6 +8,7 @@ import { createApp } from '../src/app.js';
 import { captureWelcomeOffer, claimWelcomeMinutes, finishMinuteReservation, minuteBalance, reserveMinutes } from '../src/minutes.js';
 import { linkGuestMinutes, startGuestMinutes, UnconfiguredGuestMinuteAttestor } from '../src/guest-minutes.js';
 import { applyMinuteCampaign, prepareMinuteCampaign, updateWelcomePolicy, welcomePolicy } from '../src/minutes-admin.js';
+import { welcomeFunding, updateWelcomeFunding } from '../src/welcome-funding.js';
 
 const databaseURL = process.env.TEST_DATABASE_URL;
 if (databaseURL && !new URL(databaseURL).pathname.endsWith('_test')) throw new Error('Use an isolated test database.');
@@ -16,6 +17,7 @@ async function fixture() {
   const schema = `guest_${randomUUID().replaceAll('-', '')}`, url = new URL(databaseURL!);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const db = connectDatabase(url.toString()); await db.query(`CREATE SCHEMA ${schema}`); await migrate(db);
+  await updateWelcomeFunding(db, { ...await welcomeFunding(db), dailyBudgetMinor: 100_000, lifetimeBudgetMinor: 1_000_000 }, 'test-operator', 'Isolated test funding');
   async function policy(minutes: number, daily = 100, enabled = true) {
     return updateWelcomePolicy(db, { version: (await welcomePolicy(db)).version, welcomeEnabled: enabled,
       welcomeMinutes: minutes, dailyWelcomeBudgetMinutes: daily, lifetimeWelcomeBudgetMinutes: daily }, 'test-operator', 'Guest trial tests');

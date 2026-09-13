@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { connectDatabase, transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
 import { appendMinuteEntry, millisecondsForMinutes, MS_PER_MINUTE } from './minutes.js';
+import { welcomeFunding, updateWelcomeFunding } from './welcome-funding.js';
 
 export interface WelcomePolicy {
   version: number; welcomeEnabled: boolean; welcomeMinutes: number;
@@ -113,13 +114,13 @@ export async function applyMinuteCampaign(db: Database, id: string, confirmation
 // Local operator process only. No administrative HTTP routes or client admin key.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const command = process.argv[2], url = process.env.DATABASE_URL;
-  if (!url || process.argv.length !== 3 || !['policy', 'set-policy', 'prepare-grant', 'apply-grant'].includes(command ?? '')) {
-    console.error('Use minutes-admin policy | set-policy | prepare-grant | apply-grant. Mutations read JSON from stdin.'); process.exitCode = 1;
+  if (!url || process.argv.length !== 3 || !['policy', 'set-policy', 'funding', 'set-funding', 'prepare-grant', 'apply-grant'].includes(command ?? '')) {
+    console.error('Use minutes-admin policy | set-policy | funding | set-funding | prepare-grant | apply-grant. Mutations read JSON from stdin.'); process.exitCode = 1;
   } else {
     const db = connectDatabase(url);
     try {
       let input: any;
-      if (command !== 'policy') {
+      if (command !== 'policy' && command !== 'funding') {
         let data = '';
         for await (const chunk of process.stdin) { data += chunk.toString(); if (data.length > 4_000_000) throw new ServiceError('invalid_request'); }
         input = JSON.parse(data);
@@ -127,6 +128,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let result: unknown;
       if (command === 'policy') result = await welcomePolicy(db);
       else if (command === 'set-policy') result = await updateWelcomePolicy(db, input.policy, input.actor, input.reason);
+      else if (command === 'funding') result = await welcomeFunding(db);
+      else if (command === 'set-funding') result = await updateWelcomeFunding(db, input.policy, input.actor, input.reason);
       else if (command === 'prepare-grant') result = await prepareMinuteCampaign(db, input);
       else {
         do { result = await applyMinuteCampaign(db, input.campaignID, input.confirmation); }
