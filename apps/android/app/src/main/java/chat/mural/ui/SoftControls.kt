@@ -64,7 +64,9 @@ fun FloatingNavigation(selected: Int, onSelect: (Int) -> Unit) {
             Row(Modifier.fillMaxSize()) {
                 items.forEachIndexed { index, (title, symbol, tag) ->
                     Column(Modifier.weight(1f).fillMaxHeight().clip(CircleShape).testTag(tag)
-                        .selectable(selected = selected == index, role = Role.Tab, onClick = { onSelect(index) }),
+                        .selectable(selected = selected == index, role = Role.Tab,
+                            interactionSource = remember { MutableInteractionSource() }, indication = null,
+                            onClick = { onSelect(index) }),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         MuralIcon(symbol, Modifier.size(24.dp), filled = true)
                         Text(stringResource(title), style = MaterialTheme.typography.labelSmall,
