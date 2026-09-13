@@ -8,7 +8,7 @@ All responses use `Cache-Control: no-store`. Native requests use JSON and HTTPS.
 
 | Method and path | Request | Successful response |
 | --- | --- | --- |
-| `GET /v1/auth/providers` | No authorization | `{ "google": true, "apple": false }`; flags reflect server configuration, not OAuth dashboard or end-to-end verification. |
+| `GET /v1/auth/providers` | No authorization | `{ "google": true, "googleAndroid": false, "apple": false }`; flags reflect server configuration, not OAuth dashboard or end-to-end verification. |
 | `POST /v1/auth/challenge` | `{}`; 1,024-byte limit | `challengeID` UUID, `nonce` random hex string, `expiresInSeconds: 300`. |
 | `POST /v1/auth/exchange` | `{ "provider": "google", "idToken": "…", "challengeID": "…" }`; 20,000-byte limit | `accountID` UUID, random `accessToken`, `expiresInSeconds: 86400`. Provider can also be `apple` when enabled. |
 | `GET /v1/account` | `Authorization: Bearer <accessToken>` | `accountID`, nullable `email`, `providers` array, `createdAt` in UTC with milliseconds. |
@@ -16,9 +16,13 @@ All responses use `Cache-Control: no-store`. Native requests use JSON and HTTPS.
 | `DELETE /v1/account` | Bearer and `{}` for Google; Apple requires `{ "appleAuthorizationCode": "…" }`; 5,120-byte limit | `{ "deleted": true, "retained": null }` for an empty signup account. Resolved financial history instead returns a retention explanation. |
 | `GET /v1/wallet` | Bearer | USD `balanceNanoUSD`, `reservedNanoUSD`, `availableNanoUSD` as integer strings. Account-only deployment can leave this route gated. |
 
+`GET /v1/minutes` accepts a member or guest bearer and returns exact millisecond balances under the [shared contract](../../../shared/contracts/minute-balance.schema.json). Reading this route does not grant time.
+
+`google` in provider discovery describes the iOS flow; `googleAndroid` describes the native Android flow.
+
 Unknown body fields are rejected. ID tokens are limited to 16,384 characters; Apple deletion codes to 4,096. A profile's account ID comes from the authenticated session. The API never returns identity-provider subjects or tokens in the profile.
 
-Send the challenge's **raw nonce** in the provider's authorization request. The backend compares SHA-256 of the signed token's nonce with the stored hash. Google installed-app authorization also uses PKCE and an independently checked state in the native client. Mural verifies RS256 signatures against each provider's fixed JWKS endpoint, issuer, audience, expiry, issued-at age (at most ten minutes), subject and nonce. Google's authorized party, when present, must match the configured native audience. The provider's subject identifies the account; equal emails never merge accounts. Google recommends verifying these token claims and using the stable subject as the user identifier. [Google iOS backend authentication](https://developers.google.com/identity/sign-in/ios/backend-auth)
+Send the challenge's **raw nonce** in the provider's authorization request. The backend compares SHA-256 of the signed token's nonce with the stored hash. Google installed-app authorization also uses PKCE and an independently checked state in the native client. Mural verifies RS256 signatures against each provider's fixed JWKS endpoint, issuer, audience, expiry, issued-at age (at most ten minutes), subject and nonce. For iOS, Google's authorized party, when present, must match the iOS client ID. Android tokens use `GOOGLE_ANDROID_SERVER_CLIENT_ID` as audience and must name an explicitly allowlisted Android client in `azp`. The server audience alone does not authorize an Android app. The provider's subject identifies the account; equal emails never merge accounts. Google recommends verifying these token claims and using the stable subject as the user identifier. [Google iOS backend authentication](https://developers.google.com/identity/sign-in/ios/backend-auth)
 
 Apple deletion exchanges a fresh authorization code, checks the returned identity against the locked account subject, and revokes the returned refresh token. The code and returned tokens exist only in memory. A failed exchange or revocation leaves local account records intact. Apple requires an in-app deletion path and revocation when an app uses Sign in with Apple. [Apple account deletion guidance](https://developer.apple.com/support/offering-account-deletion-in-your-app/)
 

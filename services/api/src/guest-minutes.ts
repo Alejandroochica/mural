@@ -20,7 +20,7 @@ export async function startGuestMinutes(db: Database, proof: unknown, attestor: 
   const token = randomBytes(32).toString('base64url');
   return transaction(db, async sql => {
     await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-welcome-minutes'))");
-    const policy = (await sql.query('SELECT * FROM minute_policy WHERE singleton FOR SHARE')).rows[0];
+    const policy = (await sql.query('SELECT * FROM minute_policy WHERE singleton')).rows[0];
     const claim = (await sql.query(`SELECT c.*,a.is_guest,a.deleted_at FROM minute_welcome_claims c
       JOIN accounts a ON a.id=c.account_id WHERE proof_reference=$1`, [verified.deviceReference])).rows[0];
     let account: string;

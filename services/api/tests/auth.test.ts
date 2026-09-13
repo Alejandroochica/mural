@@ -55,6 +55,23 @@ test('Google authorized party and multiple audiences cannot authorize another cl
   const authorized = await new SignJWT({ ...claims, azp: 'mural-test-client' }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).sign(privateKey);
   assert.equal((await verifyIdentity('google', authorized, digest(nonce), { googleClientID: 'mural-test-client' }, keys)).subject, 'subject');
 });
+test('Android Google tokens require their server audience and an allowlisted Android party', async () => {
+  const config = { googleClientID: 'mural-test-client', googleAndroidServerClientID: 'mural-android-server',
+    googleAndroidClientIDs: ['mural-android-debug', 'mural-android-play'] };
+  const androidToken = (aud: string, azp?: string) => new SignJWT({ nonce, azp }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+    .setSubject('same-google-user').setAudience(aud).setIssuer('https://accounts.google.com').setIssuedAt().setExpirationTime('5m').sign(privateKey);
+  for (const party of config.googleAndroidClientIDs) {
+    const value = await androidToken(config.googleAndroidServerClientID, party);
+    assert.equal((await verifyIdentity('google', value, digest(nonce), config, keys)).subject, 'same-google-user');
+  }
+  for (const [aud, party] of [['mural-android-server', undefined], ['mural-android-server', 'other-android-app'],
+    ['other-server', 'mural-android-debug'], ['mural-test-client', 'mural-android-debug'], ['mural-android-server', 'mural-android-server']]) {
+    await assert.rejects(verifyIdentity('google', await androidToken(aud!, party), digest(nonce), config, keys));
+  }
+  assert.equal((await verifyIdentity('google', await token(), digest(nonce), config, keys)).provider, 'google');
+  await assert.rejects(verifyIdentity('google', await androidToken('mural-android-server', 'mural-android-debug'), digest(nonce),
+    { ...config, googleAndroidClientIDs: [] }, keys));
+});
 test('unexpected provider email content is never retained', async () => {
   for (const email of ['not-an-email', 'x\ny@example.test', 'x'.repeat(300) + '@example.test']) {
     const identity = await verifyIdentity('google', await token({ email }), digest(nonce), { googleClientID: 'mural-test-client' }, keys);

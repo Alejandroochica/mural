@@ -1,7 +1,7 @@
 import { createApp } from './app.js';
 import { connectDatabase } from './db.js';
 import { catalogFromEnvironment, SandboxPayments } from './payments.js';
-import { pruneAuthenticationRecords } from './auth.js';
+import { hasGoogleSignIn, pruneAuthenticationRecords } from './auth.js';
 import { readFile } from 'node:fs/promises';
 import { AppleTokenRevoker } from './apple-revocation.js';
 import { HostedVoice } from './hosted-voice.js';
@@ -35,10 +35,17 @@ try {
   const accessRequests = accessConfig ? new AccessRequests(db, accessConfig) : undefined;
   const accountsConfig = accountAdmissionConfig(process.env);
   const accounts = accountsConfig ? { admission: new AuthAdmission(db, accountsConfig) } : undefined;
-  if (accounts && !process.env.GOOGLE_CLIENT_ID && !(appleClient && appleRevoker)) throw new Error('No account identity provider configured.');
   await pruneAccessRequests(db);
   await pruneAuthenticationRecords(db);
-  const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient }, payments, appleRevoker, hosted, accessRequests, accounts });
+  const googleAndroidClientIDs = (process.env.GOOGLE_ANDROID_CLIENT_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean);
+  const googleAndroidServerClientID = process.env.GOOGLE_ANDROID_SERVER_CLIENT_ID;
+  if (Boolean(googleAndroidServerClientID) !== Boolean(googleAndroidClientIDs.length) || googleAndroidClientIDs.length > 10 ||
+    [googleAndroidServerClientID, ...googleAndroidClientIDs].filter(Boolean).some(id => !/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$/.test(id!)))
+    throw new Error('Android Google identity configuration is incomplete.');
+  if (accounts && !hasGoogleSignIn({ googleClientID: process.env.GOOGLE_CLIENT_ID, googleAndroidServerClientID, googleAndroidClientIDs }) &&
+    !(appleClient && appleRevoker)) throw new Error('No account identity provider configured.');
+  const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient,
+    googleAndroidServerClientID, googleAndroidClientIDs }, payments, appleRevoker, hosted, accessRequests, accounts });
   const cleanup = setInterval(() => {
     void pruneAuthenticationRecords(db).catch(() => { console.error('Account retention cleanup failed.'); });
     void pruneAccessRequests(db).catch(() => { console.error('Access request retention cleanup failed.'); });

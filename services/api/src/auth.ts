@@ -8,26 +8,39 @@ import { appendMinuteEntry, captureWelcomeOffer } from './minutes.js';
 
 export type Provider = 'google' | 'apple';
 export type Identity = { provider: Provider; subject: string; email: string | null };
-export type AuthConfig = { googleClientID?: string; appleClientID?: string };
+export type AuthConfig = { googleClientID?: string; appleClientID?: string;
+  googleAndroidServerClientID?: string; googleAndroidClientIDs?: string[] };
+export const hasGoogleSignIn = (config: AuthConfig) => Boolean(config.googleClientID ||
+  (config.googleAndroidServerClientID && config.googleAndroidClientIDs?.length));
 const googleKeys = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 const appleKeys = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
 export const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 export async function verifyIdentity(provider: Provider, token: string, nonceHash: string,
   config: AuthConfig, getKey?: JWTVerifyGetKey): Promise<Identity> {
-  const audience = provider === 'google' ? config.googleClientID : config.appleClientID;
-  if (!audience) throw new ServiceError('identity_provider_not_configured', 503);
+  const audiences = provider === 'google'
+    ? [config.googleClientID, ...(config.googleAndroidClientIDs?.length ? [config.googleAndroidServerClientID] : [])].filter((id): id is string => Boolean(id))
+    : [config.appleClientID].filter((id): id is string => Boolean(id));
+  if (!audiences.length) throw new ServiceError('identity_provider_not_configured', 503);
   try {
     if (!token || token.length > 16_384) throw new Error();
     const { payload } = await jwtVerify(token, getKey ?? (provider === 'google' ? googleKeys : appleKeys), {
-      algorithms: ['RS256'], audience, issuer: provider === 'google' ? ['https://accounts.google.com', 'accounts.google.com'] : 'https://appleid.apple.com',
+      algorithms: ['RS256'], audience: audiences, issuer: provider === 'google' ? ['https://accounts.google.com', 'accounts.google.com'] : 'https://appleid.apple.com',
       maxTokenAge: '10 minutes', clockTolerance: 5, requiredClaims: ['exp', 'iat', 'sub', 'nonce']
     });
     if (typeof payload.nonce !== 'string' || !/^[a-f0-9]{64}$/.test(nonceHash)) throw new Error();
     if (!timingSafeEqual(Buffer.from(digest(payload.nonce)), Buffer.from(nonceHash))) throw new Error();
     if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 255) throw new Error();
-    if (provider === 'google' && ((payload.azp !== undefined && payload.azp !== audience) ||
-        (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== audience))) throw new Error();
+    if (provider === 'google') {
+      const tokenAudiences = typeof payload.aud === 'string' ? [payload.aud] : payload.aud ?? [];
+      const android = config.googleAndroidServerClientID !== undefined && tokenAudiences.includes(config.googleAndroidServerClientID);
+      const parties = android ? config.googleAndroidClientIDs ?? [] : [config.googleClientID];
+      // Native Android tokens must identify an explicitly registered Android client.
+      // The web client ID is an audience, not permission for arbitrary Android apps.
+      if ((android && (typeof payload.azp !== 'string' || !parties.includes(payload.azp))) ||
+          (!android && payload.azp !== undefined && payload.azp !== config.googleClientID) ||
+          (tokenAudiences.length > 1 && typeof payload.azp !== 'string')) throw new Error();
+    }
     const verified = payload.email_verified === true || payload.email_verified === 'true';
     const email = typeof payload.email === 'string' && verified && Buffer.byteLength(payload.email) <= 254 &&
       /^[^\s@\x00-\x1f\x7f]+@[^\s@\x00-\x1f\x7f]+$/.test(payload.email) ? payload.email : null;

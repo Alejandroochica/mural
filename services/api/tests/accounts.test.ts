@@ -53,7 +53,7 @@ test('disabled account routes reject before database access and advertise no sig
       const response = await service.inject({ method, url, ...(method === 'GET' ? {} : { payload: {} }) });
       assert.equal(response.statusCode, 503); assert.equal(response.json().error.code, 'accounts_unavailable');
     }
-    assert.deepEqual((await service.inject({ method: 'GET', url: '/v1/auth/providers' })).json(), { google: false, apple: false });
+    assert.deepEqual((await service.inject({ method: 'GET', url: '/v1/auth/providers' })).json(), { google: false, googleAndroid: false, apple: false });
     assert.equal(queries, 0);
   } finally { await service.close(); }
 });
@@ -61,7 +61,7 @@ integration('signed Google HTTP signup reads the same profile from PostgreSQL, s
   const service = app(), subject = randomUUID();
   try {
     const providers = await service.inject({ method: 'GET', url: '/v1/auth/providers', headers });
-    assert.deepEqual(providers.json(), { google: true, apple: false });
+    assert.deepEqual(providers.json(), { google: true, googleAndroid: false, apple: false });
     async function login() {
       const challenge = await service.inject({ method: 'POST', url: '/v1/auth/challenge', headers, payload: {} });
       assert.equal(challenge.statusCode, 200);
@@ -90,6 +90,30 @@ integration('signed Google HTTP signup reads the same profile from PostgreSQL, s
       assert.equal((await db!.query(`SELECT 1 FROM ${table} WHERE ${column}=$1`, [first.accountID])).rowCount, 0);
     }
     await assert.rejects(authenticate(db!, `Bearer ${second.accessToken}`));
+  } finally { await service.close(); }
+});
+integration('Android-only configuration signs the same Google subject into its existing iPhone account', async () => {
+  const subject = randomUUID(), existing = await session(subject);
+  const androidAuth = { googleAndroidServerClientID: 'android-server-test', googleAndroidClientIDs: ['android-client-test'] };
+  const service = createApp({ db: db!, auth: androidAuth,
+    accounts: { admission: new AuthAdmission(db!, admissionConfig), identityVerifier: verifier } });
+  try {
+    assert.deepEqual((await service.inject({ method: 'GET', url: '/v1/auth/providers', headers })).json(),
+      { google: false, googleAndroid: true, apple: false });
+    const challenge = (await service.inject({ method: 'POST', url: '/v1/auth/challenge', headers, payload: {} })).json();
+    const idToken = await new SignJWT({ nonce: challenge.nonce, azp: 'android-client-test', email: 'android@example.test', email_verified: true })
+      .setProtectedHeader({ alg: 'RS256', kid: 'account-test' }).setSubject(subject).setAudience(androidAuth.googleAndroidServerClientID)
+      .setIssuer('https://accounts.google.com').setIssuedAt().setExpirationTime('5m').sign(signing.privateKey);
+    const exchange = await service.inject({ method: 'POST', url: '/v1/auth/exchange', headers,
+      payload: { provider: 'google', idToken, challengeID: challenge.challengeID } });
+    assert.equal(exchange.statusCode, 200); assert.equal(exchange.json().accountID, existing.accountID);
+    const authorization = `Bearer ${exchange.json().accessToken}`;
+    const profile = await service.inject({ method: 'GET', url: '/v1/account', headers: { ...headers, authorization } });
+    assert.equal(profile.statusCode, 200); assert.equal(profile.json().email, 'android@example.test');
+    assert.equal((await db!.query('SELECT 1 FROM minute_welcome_offers WHERE account_id=$1', [existing.accountID])).rowCount, 1);
+    const replay = await service.inject({ method: 'POST', url: '/v1/auth/exchange', headers,
+      payload: { provider: 'google', idToken, challengeID: challenge.challengeID } });
+    assert.equal(replay.statusCode, 401);
   } finally { await service.close(); }
 });
 integration('Apple HTTP signup stays blocked without revocation support; enabled test adapter revokes before deletion', async () => {
@@ -242,6 +266,6 @@ integration('public read throttling uses authenticated client networks instead o
     for (let i = 0; i < 120; i++) assert.equal((await service.inject({ method: 'GET', url: '/v1/auth/providers', headers })).statusCode, 200);
     assert.equal((await service.inject({ method: 'GET', url: '/v1/auth/providers', headers })).statusCode, 429);
     const other = await service.inject({ method: 'GET', url: '/v1/auth/providers', headers: { ...headers, 'x-mural-client-ip': '198.51.100.73' } });
-    assert.equal(other.statusCode, 200); assert.deepEqual(other.json(), { google: true, apple: false });
+    assert.equal(other.statusCode, 200); assert.deepEqual(other.json(), { google: true, googleAndroid: false, apple: false });
   } finally { await service.close(); }
 });
