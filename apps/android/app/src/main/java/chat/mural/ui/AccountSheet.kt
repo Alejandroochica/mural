@@ -1,0 +1,106 @@
+package chat.mural.ui
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
+import chat.mural.R
+import chat.mural.core.AccountNotice
+import chat.mural.core.AccountState
+import java.text.NumberFormat
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Unit,
+                 onSignOut: () -> Unit, onDelete: () -> Unit, onRefresh: () -> Unit) {
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+    val uri = LocalUriHandler.current
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MuralColors.Cream,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(bottom = 24.dp)
+            .testTag("account-sheet"), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            MuralOrb(modifier = Modifier.size(112.dp), energy = if (state.busy) .12f else 0f)
+            Text(stringResource(if (state.signedIn) R.string.account_welcome_back else R.string.account_welcome),
+                style = MaterialTheme.typography.headlineLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(state.email ?: stringResource(if (state.signedIn) R.string.account_connected else R.string.account_intro),
+                style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            if (state.signedIn) {
+                Surface(color = MuralColors.Peach, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(stringResource(R.string.account_time_label), style = MaterialTheme.typography.labelLarge)
+                        val milliseconds = state.minutes?.availableMilliseconds
+                        Text(if (milliseconds == null) stringResource(R.string.account_time_unavailable) else
+                            stringResource(R.string.account_minutes_value, NumberFormat.getNumberInstance().apply {
+                                maximumFractionDigits = 1; roundingMode = java.math.RoundingMode.DOWN
+                            }.format(milliseconds / 60_000.0)), style = MaterialTheme.typography.headlineMedium,
+                            modifier = Modifier.testTag("account-minute-balance"))
+                    }
+                }
+                Text(stringResource(R.string.account_local_data), style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
+            } else {
+                val enabled = !state.busy && state.googleAvailable
+                Image(painterResource(R.drawable.google_sign_in), stringResource(R.string.account_google),
+                    Modifier.width(260.dp).height(62.dp).alpha(if (enabled) 1f else .45f)
+                        .clickable(enabled = enabled, role = Role.Button, onClick = onSignIn).testTag("account-google"))
+                if (!state.busy && !state.googleAvailable) Text(stringResource(R.string.account_not_ready),
+                    style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
+                Text(stringResource(R.string.account_agreement), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+            }
+            if (state.busy) CircularProgressIndicator(Modifier.size(22.dp), color = MuralColors.Ink, strokeWidth = 2.dp)
+            state.notice?.let { Text(stringResource(it.textResource()), color = MuralColors.Secondary,
+                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("account-notice")) }
+            if (!state.busy) {
+                if (state.signedIn) {
+                    OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.account_sign_out))
+                    }
+                    MuralTextButton(onClick = { confirmDelete = true }) { Text(stringResource(R.string.account_delete), color = MuralColors.Red) }
+                }
+                if (state.notice != null || !state.googleAvailable || (state.signedIn && state.minutes == null)) {
+                    MuralTextButton(onClick = onRefresh) { Text(stringResource(R.string.account_refresh), color = MuralColors.Ink) }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MuralTextButton(onClick = { uri.openUri("https://mural.chat/privacy") }) { Text(stringResource(R.string.account_privacy), color = MuralColors.Secondary) }
+                MuralTextButton(onClick = { uri.openUri("https://mural.chat/terms") }) { Text(stringResource(R.string.account_terms), color = MuralColors.Secondary) }
+            }
+        }
+    }
+    if (confirmSignOut) AlertDialog(onDismissRequest = { confirmSignOut = false },
+        title = { Text(stringResource(R.string.account_sign_out)) }, text = { Text(stringResource(R.string.account_sign_out_detail)) },
+        confirmButton = { MuralTextButton(onClick = { confirmSignOut = false; onSignOut() }, enabled = !state.busy) { Text(stringResource(R.string.account_sign_out)) } },
+        dismissButton = { MuralTextButton(onClick = { confirmSignOut = false }) { Text(stringResource(R.string.common_cancel)) } })
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
+        title = { Text(stringResource(R.string.account_delete)) }, text = { Text(stringResource(R.string.account_delete_detail)) },
+        confirmButton = { MuralTextButton(onClick = { confirmDelete = false; onDelete() }, enabled = !state.busy,
+            modifier = Modifier.testTag("account-confirm-delete")) { Text(stringResource(R.string.account_delete), color = MuralColors.Red) } },
+        dismissButton = { MuralTextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.common_cancel)) } })
+}
+
+private fun AccountNotice.textResource() = when (this) {
+    AccountNotice.UNAVAILABLE -> R.string.account_error_connection
+    AccountNotice.SIGN_IN_AGAIN -> R.string.account_error_expired
+    AccountNotice.INVALID_RESPONSE -> R.string.account_error_response
+    AccountNotice.SECURE_STORAGE -> R.string.account_error_storage
+    AccountNotice.GOOGLE -> R.string.account_error_google
+    AccountNotice.BILLING_UNRESOLVED -> R.string.account_error_billing
+    AccountNotice.APPLE_DELETION -> R.string.account_error_apple
+    AccountNotice.SIGNED_OUT_LOCALLY -> R.string.account_signed_out_locally
+    AccountNotice.DELETED -> R.string.account_deleted
+}

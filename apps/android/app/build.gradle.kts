@@ -1,9 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+val muralLocal = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+fun muralConfiguration(name: String): String = providers.gradleProperty(name).orNull ?: muralLocal.getProperty(name, "")
+fun buildString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "").replace("\r", "") + "\""
 android {
     namespace = "chat.mural"
     compileSdk = 36
@@ -14,6 +21,8 @@ android {
         versionCode = 1
         versionName = "0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "MANAGED_API_ORIGIN", buildString(muralConfiguration("mural.apiOrigin")))
+        buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", buildString(muralConfiguration("mural.googleServerClientID")))
     }
     // A personal installation can preserve its local signing identity across SDK resets.
     // This file is ignored by Git; clean checkouts use Android's standard debug key.
@@ -25,6 +34,8 @@ android {
             initWith(getByName("debug"))
             applicationIdSuffix = ".uitest"
             matchingFallbacks += "debug"
+            buildConfigField("String", "MANAGED_API_ORIGIN", "\"\"")
+            buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"\"")
         }
     }
     testBuildType = "uiTest"
@@ -33,7 +44,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     testOptions { unitTests.isReturnDefaultValues = true }
 }
@@ -47,6 +58,9 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

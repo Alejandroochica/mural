@@ -28,9 +28,19 @@ import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
+import chat.mural.core.AccountFailure
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
 class MainActivity : ComponentActivity() {
     private val vm: MuralViewModel by viewModels()
+    private val account: AccountViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,7 +104,31 @@ class MainActivity : ComponentActivity() {
                 onOpenAppSettings = if (microphonePermanentlyDenied) ({ openAppSettings() }) else null,
                 onExport = { exportLauncher.launch("Mural-learning-backup.json") },
                 onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+                account = account,
+                onGoogleSignIn = ::signInWithGoogle,
+                onSignOut = account::signOut,
             )
+        }
+    }
+
+    private fun signInWithGoogle() {
+        val config = account.configuration ?: return
+        // Credential Manager receives the current Activity only for this lifecycle-bound call.
+        // Rotation cancels the chooser; no Activity or provider token is retained in the ViewModel.
+        lifecycleScope.launch {
+            account.signIn { nonce ->
+                try {
+                    val option = GetSignInWithGoogleOption.Builder(config.googleServerClientID).setNonce(nonce).build()
+                    val result = CredentialManager.create(this@MainActivity).getCredential(this@MainActivity,
+                        GetCredentialRequest.Builder().addCredentialOption(option).build())
+                    val credential = result.credential as? CustomCredential ?: throw AccountFailure.Google
+                    if (credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) throw AccountFailure.Google
+                    GoogleIdTokenCredential.createFrom(credential.data).idToken
+                } catch (_: GetCredentialCancellationException) { throw CancellationException("Google sign-in cancelled") }
+                catch (_: NoCredentialException) { throw AccountFailure.Google }
+                catch (error: CancellationException) { throw error }
+                catch (_: Exception) { throw AccountFailure.Google }
+            }
         }
     }
 

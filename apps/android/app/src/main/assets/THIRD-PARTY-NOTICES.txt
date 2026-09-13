@@ -1,6 +1,10 @@
 Mural for Android
 
 Mural: MIT; see Mural-LICENSE.txt.
+Nunito font: SIL Open Font License 1.1; see Nunito-OFL.txt.
+https://github.com/google/fonts/tree/main/ofl/nunito
+Google sign-in button artwork: Google branding guidelines and trademark rights apply.
+https://developers.google.com/identity/branding-guidelines
 AndroidX / Jetpack Compose (Google), Kotlin and kotlinx.coroutines/serialization (JetBrains),
 OkHttp and Okio (Square): Apache License 2.0; see Apache-2.0.txt and each upstream project.
 WebRTC Android package io.github.webrtc-sdk:android:150.7871.01:

@@ -63,7 +63,8 @@ import chat.mural.core.Speaker
 import chat.mural.core.UsageSummary
 
 @Composable
-fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Unit, onReviewConsent: () -> Unit) {
+fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Unit, onReviewConsent: () -> Unit,
+                   onAccount: (() -> Unit)? = null) {
     var languageDialog by rememberSaveable { mutableStateOf(false) }
     var meaningDialog by rememberSaveable { mutableStateOf(false) }
     var keyDialog by rememberSaveable { mutableStateOf(false) }
@@ -81,6 +82,11 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item { PageHeading(stringResource(R.string.settings_eyebrow), stringResource(R.string.settings_title), stringResource(R.string.settings_subtitle), Modifier.padding(top = 20.dp)) }
+        if (onAccount != null) item {
+            SettingCard {
+                SettingRow(stringResource(R.string.account_title), stringResource(R.string.account_settings_detail)) { onAccount() }
+            }
+        }
 
         item { SectionTitle(stringResource(R.string.settings_section_conversation)) }
         item {
@@ -107,7 +113,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
             }
         }
         item {
-            OutlinedTextField(
+            MuralTextField(
                 prefs.interests,
                 { vm.updatePreferences(prefs.copy(interests = it.take(500))) },
                 Modifier.fillMaxWidth(),
@@ -131,7 +137,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                     Text(stringResource(if (vm.hasKey) R.string.settings_replace_key else R.string.settings_save_key))
                 }
                 LinkRow(stringResource(R.string.settings_open_api_keys)) { uriHandler.openUri("https://platform.openai.com/api-keys") }
-                if (vm.hasKey) TextButton(onClick = { deleteKey = true }, enabled = !vm.isRunning, modifier = Modifier.align(Alignment.End)) {
+                if (vm.hasKey) MuralTextButton(onClick = { deleteKey = true }, enabled = !vm.isRunning, modifier = Modifier.align(Alignment.End)) {
                     Text(stringResource(R.string.settings_remove_key), color = MuralColors.Red)
                 }
             }
@@ -166,7 +172,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                     color = MuralColors.Secondary,
                 )
                 if (prefs.aiConsentVersion == AI_CONSENT_VERSION) {
-                    TextButton(onClick = { revokeConsent = true }, enabled = !vm.isRunning, modifier = Modifier.testTag("revoke-ai-consent")) {
+                    MuralTextButton(onClick = { revokeConsent = true }, enabled = !vm.isRunning, modifier = Modifier.testTag("revoke-ai-consent")) {
                         Text(stringResource(R.string.settings_revoke_consent_button), color = MuralColors.Red)
                     }
                 } else {
@@ -191,7 +197,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                         Text("›", style = MaterialTheme.typography.headlineMedium)
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { deleteSession = session }) { Text(stringResource(R.string.common_delete), color = MuralColors.Red) }
+                        MuralTextButton(onClick = { deleteSession = session }) { Text(stringResource(R.string.common_delete), color = MuralColors.Red) }
                     }
                 }
             }
@@ -207,7 +213,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                     style = MaterialTheme.typography.bodySmall,
                     color = MuralColors.Secondary,
                 )
-                TextButton(onClick = { deleteAll = true }, enabled = !vm.isRunning) { Text(stringResource(R.string.settings_delete_all_data), color = MuralColors.Red) }
+                MuralTextButton(onClick = { deleteAll = true }, enabled = !vm.isRunning) { Text(stringResource(R.string.settings_delete_all_data), color = MuralColors.Red) }
             }
         }
 
@@ -319,7 +325,7 @@ private fun SelectionDialog(title: String, options: List<Pair<String, String>>, 
                         color = if (id == selected) MuralColors.SurfaceBright else Color.Transparent,
                     ) { Text((if (id == selected) "✓  " else "    ") + label, Modifier.padding(14.dp)) }
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.common_cancel)) }
+                MuralTextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.common_cancel)) }
             }
         }
     }
@@ -341,7 +347,7 @@ private fun KeyDialog(vm: MuralViewModel, onDismiss: () -> Unit) {
             Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
                 Text(stringResource(R.string.settings_key_dialog_title), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.settings_key_dialog_note), color = MuralColors.Secondary)
-                OutlinedTextField(
+                MuralTextField(
                     key,
                     { key = it.take(500) },
                     Modifier.fillMaxWidth().testTag("api-key-input").semantics { password() },
@@ -351,7 +357,7 @@ private fun KeyDialog(vm: MuralViewModel, onDismiss: () -> Unit) {
                     label = { Text(stringResource(R.string.settings_key_dialog_field_label)) },
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { key = ""; onDismiss() }) { Text(stringResource(R.string.common_cancel)) }
+                    MuralTextButton(onClick = { key = ""; onDismiss() }) { Text(stringResource(R.string.common_cancel)) }
                     Button(onClick = { vm.saveKey(key.trim()); key = ""; onDismiss() }, enabled = key.isNotBlank()) { Text(stringResource(R.string.common_save)) }
                 }
             }
@@ -365,8 +371,8 @@ private fun ConfirmDialog(title: String, message: String, confirm: String, onCon
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(confirm, color = MuralColors.Red) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
+        confirmButton = { MuralTextButton(onClick = onConfirm) { Text(confirm, color = MuralColors.Red) } },
+        dismissButton = { MuralTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -393,7 +399,7 @@ fun TranscriptDialog(vm: MuralViewModel, session: SessionRecord, onDismiss: () -
                     ) {
                         Text(stringResource(if (passage.speaker == Speaker.user) R.string.history_speaker_you else R.string.history_speaker_mural), style = MaterialTheme.typography.labelSmall, color = MuralColors.Secondary)
                         Text(passage.text)
-                        if (passage.speaker == Speaker.user) TextButton(onClick = { correcting = passage }) { Text(stringResource(R.string.history_edit_passage_button)) }
+                        if (passage.speaker == Speaker.user) MuralTextButton(onClick = { correcting = passage }) { Text(stringResource(R.string.history_edit_passage_button)) }
                     }
                 }
                 liveSession.topics.flatMap { it.sources }.filter { it.safeUrl() != null }.takeIf { it.isNotEmpty() }?.let { sources ->
@@ -403,7 +409,7 @@ fun TranscriptDialog(vm: MuralViewModel, session: SessionRecord, onDismiss: () -
                         Text("↗ ${source.title}", color = MuralColors.Orange, modifier = Modifier.clickable { source.safeUrl()?.let(uriHandler::openUri) }.padding(vertical = 6.dp))
                     }
                 }
-                item { TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.common_close)) } }
+                item { MuralTextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.common_close)) } }
             }
         }
     }
@@ -418,8 +424,8 @@ private fun CorrectionDialog(passage: Passage, onSave: (String) -> Unit, onDismi
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.history_correction_dialog_title)) },
-        text = { OutlinedTextField(text, { text = it.take(10_000) }, minLines = 3, maxLines = 9) },
+        text = { MuralTextField(text, { text = it.take(10_000) }, minLines = 3, maxLines = 9) },
         confirmButton = { Button(onClick = { onSave(text.trim()) }, enabled = text.isNotBlank()) { Text(stringResource(R.string.common_save)) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
+        dismissButton = { MuralTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }

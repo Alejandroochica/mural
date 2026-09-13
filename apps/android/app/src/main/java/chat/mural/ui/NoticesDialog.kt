@@ -29,7 +29,7 @@ import chat.mural.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val NOTICE_FILES = listOf("THIRD-PARTY-NOTICES.txt", "Mural-LICENSE.txt", "Apache-2.0.txt", "WebRTC-SDK-LICENSE.txt", "WebRTC-THIRD-PARTY-NOTICES.md")
+private val NOTICE_FILES = listOf("Nunito-OFL.txt", "THIRD-PARTY-NOTICES.txt", "Mural-LICENSE.txt", "Apache-2.0.txt", "WebRTC-SDK-LICENSE.txt", "WebRTC-THIRD-PARTY-NOTICES.md")
 
 private data class NoticeBlock(val text: String, val isFileTitle: Boolean)
 
@@ -51,7 +51,7 @@ fun NoticesDialog(onDismiss: () -> Unit) {
                 Row(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.settings_open_source_notices), style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f).semantics { heading() })
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
+                    MuralTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
                 }
                 LazyColumn(Modifier.fillMaxSize().testTag("notices-list"), contentPadding = PaddingValues(20.dp)) {
                     items(blocks) { block ->

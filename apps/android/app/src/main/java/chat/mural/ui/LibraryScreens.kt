@@ -11,6 +11,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -66,39 +75,35 @@ fun TopicsScreen(vm: MuralViewModel, onChoose: () -> Unit, onCurrentTopic: (Stri
             (search.isBlank() || it.title.contains(search, true) || it.subtitle.contains(search, true) || it.category.contains(search, true))
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("topics-screen").padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            PageHeading(stringResource(R.string.topics_eyebrow), stringResource(R.string.topics_title), stringResource(R.string.topics_subtitle), Modifier.padding(top = 20.dp))
+    LazyVerticalGrid(columns = GridCells.Adaptive(if (LocalDensity.current.fontScale > 1.3f) 260.dp else 150.dp),
+        modifier = Modifier.fillMaxSize().testTag("topics-screen").padding(horizontal = 24.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 120.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            MuralSearchField(search, { search = it.take(80) }, stringResource(R.string.topics_search_placeholder))
         }
-        item {
-            OutlinedTextField(
-                search,
-                { search = it.take(80) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text(stringResource(R.string.topics_search_placeholder)) },
-            )
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            PageHeading(stringResource(R.string.topics_eyebrow), stringResource(R.string.topics_title),
+                stringResource(R.string.topics_subtitle), Modifier.padding(top = 20.dp, bottom = 10.dp))
         }
-        item {
-            Surface(
-                Modifier.fillMaxWidth().clickable(role = Role.Button) { vm.chooseTheme(null); onChoose() },
-                shape = RoundedCornerShape(24.dp),
-                color = MuralColors.SurfaceBright,
-            ) {
-                Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("≈", style = MaterialTheme.typography.headlineMedium, color = MuralColors.Orange)
-                    Text(" " + stringResource(R.string.topics_just_talk), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    Text("↗")
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Surface(Modifier.fillMaxWidth().clickable(role = Role.Button) { vm.chooseTheme(null); onChoose() },
+                shape = RoundedCornerShape(26.dp), color = MuralColors.Surface.copy(alpha = .85f)) {
+                Row(Modifier.padding(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MuralIcon(MuralSymbol.Wave)
+                    Text(stringResource(R.string.topics_just_talk), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    MuralIcon(MuralSymbol.ChevronRight, Modifier.size(19.dp))
                 }
             }
         }
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(categories) { item ->
-                    FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
+                    FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item), style = MaterialTheme.typography.bodySmall) },
+                        shape = CircleShape, border = null,
+                        colors = FilterChipDefaults.filterChipColors(containerColor = MuralColors.Surface.copy(alpha = .70f),
+                            selectedContainerColor = MuralColors.Peach, selectedLabelColor = MuralColors.Ink),
+                        modifier = Modifier.height(44.dp))
                 }
             }
         }
@@ -108,10 +113,9 @@ fun TopicsScreen(vm: MuralViewModel, onChoose: () -> Unit, onCurrentTopic: (Stri
                 else { vm.chooseTheme(theme); onChoose() }
             }
         }
-        if (themes.isEmpty()) item {
+        if (themes.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
             Text(stringResource(R.string.topics_no_results), color = MuralColors.Secondary, modifier = Modifier.padding(vertical = 28.dp))
         }
-        item { Spacer(Modifier.height(24.dp)) }
     }
     if (current) CurrentTopicDialog(vm, onDismiss = { current = false }, onFind = onCurrentTopic, onDiscuss = {
         vm.discuss(it); current = false; onChoose()
@@ -125,14 +129,11 @@ private fun ThemeCard(theme: ConversationTheme, index: Int, onClick: () -> Unit)
         shape = RoundedCornerShape(26.dp),
         color = MuralColors.Panels.getOrElse(theme.colorIndex) { MuralColors.Panels[index % MuralColors.Panels.size] },
     ) {
-        Row(Modifier.padding(20.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(48.dp).background(MuralColors.Cream.copy(alpha = .28f), CircleShape), contentAlignment = Alignment.Center) {
-                Text(themeGlyph(theme.id), style = MaterialTheme.typography.titleLarge)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(theme.title, style = MaterialTheme.typography.titleLarge)
-                Text(theme.subtitle, color = MuralColors.Secondary)
-                Text(categoryLabel(theme.category), style = MaterialTheme.typography.labelSmall, color = MuralColors.Secondary)
+        Column(Modifier.fillMaxWidth().heightIn(min = 180.dp).padding(19.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+            MuralIcon(themeSymbol(theme.id), Modifier.size(31.dp), color = MuralColors.Secondary)
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(theme.title, style = MaterialTheme.typography.titleMedium)
+                Text(theme.subtitle, color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -152,7 +153,7 @@ private fun CurrentTopicDialog(
             LazyColumn(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 item { PageHeading(stringResource(R.string.topics_current_dialog_eyebrow), stringResource(R.string.topics_current_dialog_title), stringResource(R.string.topics_current_dialog_subtitle)) }
                 item {
-                    OutlinedTextField(
+                    MuralTextField(
                         query,
                         { query = it.take(160) },
                         modifier = Modifier.fillMaxWidth(),
@@ -183,12 +184,12 @@ private fun CurrentTopicDialog(
                         Button(
                             onClick = { onDiscuss(brief) },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Cream),
+                            colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Orange, contentColor = MuralColors.Ink),
                         ) { Text(stringResource(R.string.topics_talk_about_button)) }
                     }
                 }
                 item { Text(stringResource(R.string.topics_sources_note), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary) }
-                item { TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.common_close)) } }
+                item { MuralTextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.common_close)) } }
             }
         }
     }
@@ -201,16 +202,16 @@ fun WordsScreen(vm: MuralViewModel) {
     val words = vm.learner.words.filter { search.isBlank() || it.lemma.contains(search, true) || it.meaning.contains(search, true) }
     LazyColumn(
         Modifier.fillMaxSize().testTag("words-screen").padding(horizontal = 22.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(bottom = 120.dp),
     ) {
         item { PageHeading(stringResource(R.string.words_eyebrow, vm.language.name), stringResource(R.string.words_title), stringResource(R.string.words_subtitle), Modifier.padding(top = 20.dp)) }
         item {
-            OutlinedTextField(search, { search = it.take(80) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.words_search_placeholder)) })
+            MuralSearchField(search, { search = it.take(80) }, stringResource(R.string.words_search_placeholder))
         }
         if (words.isEmpty()) item {
             Surface(shape = RoundedCornerShape(28.dp), color = MuralColors.Sage) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("⌁", style = MaterialTheme.typography.headlineLarge)
+                    MuralIcon(MuralSymbol.Leaf, Modifier.size(34.dp), color = MuralColors.Secondary)
                     Text(stringResource(if (search.isBlank()) R.string.words_empty_title_blank else R.string.words_empty_title_search), style = MaterialTheme.typography.headlineMedium)
                     Text(
                         stringResource(if (search.isBlank()) R.string.words_empty_subtitle_blank else R.string.words_empty_subtitle_search),
@@ -266,8 +267,8 @@ private fun WordDialog(word: WordState, onRemove: () -> Unit, onDismiss: () -> U
                     style = MaterialTheme.typography.bodySmall,
                     color = MuralColors.Secondary,
                 )
-                TextButton(onClick = onRemove) { Text(stringResource(R.string.words_remove_button), color = MuralColors.Red) }
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.words_done_button)) }
+                MuralTextButton(onClick = onRemove) { Text(stringResource(R.string.words_remove_button), color = MuralColors.Red) }
+                MuralTextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.words_done_button)) }
             }
         }
     }
@@ -305,14 +306,13 @@ private fun wordLabel(value: String) = when (value) {
     else -> value
 }
 
-private fun themeGlyph(id: String) = when (id) {
-    "coffee" -> "☕"
-    "weekend" -> "☀"
-    "walk", "cabin" -> "⌁"
-    "dinner", "restaurant" -> "◇"
-    "music" -> "♫"
-    "books" -> "▤"
-    "today" -> "◉"
-    "travel", "travelstories" -> "↗"
-    else -> "✦"
+private fun themeSymbol(id: String) = when (id) {
+    "coffee" -> MuralSymbol.Coffee
+    "weekend" -> MuralSymbol.Sun
+    "walk", "cabin" -> MuralSymbol.Leaf
+    "dinner", "restaurant" -> MuralSymbol.Food
+    "music" -> MuralSymbol.Music
+    "books" -> MuralSymbol.Words
+    "today", "travel", "travelstories" -> MuralSymbol.Globe
+    else -> MuralSymbol.Sparkles
 }

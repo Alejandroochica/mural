@@ -70,3 +70,7 @@ The interface tests install as a separate app, `chat.mural.android.uitest`, so t
 - **Update rejected because of the signature:** use the same signing key as the previous installation. Export a backup before any uninstall.
 
 The architecture is described in [android/design.md](android/design.md); test results are recorded in [android-validation.md](../verification/android-validation.md).
+
+## Optional Mural account
+
+Google account setup is documented in [Android accounts](android-accounts.md). It uses a separate, encrypted session and keeps learning history local. Hosted conversations and minute purchases are still in development.

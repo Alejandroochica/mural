@@ -6,6 +6,16 @@ Mural keeps two native clients: SwiftUI and SwiftData in `apps/ios/`, and Kotlin
 
 The Android client keeps the eight language modules, the 24 themes and their cultural variants, WebRTC voice, written replies, meanings, word lookup, current topics with sources, history, corrections, vocabulary and learning projection. It adds written conversation without the microphone permission. Android account and minute-purchase integration is in progress. The public hosted conversation service remains disabled; no cloud learning sync is planned.
 
+## Visual system
+
+The iOS screens in `release/screenshots/en-US/` are the visual reference. Android uses the same cream, orange, peach, lilac, sage and butter colors, with bundled [Nunito](https://github.com/google/fonts/tree/main/ofl/nunito) for rounded typography. The font and its OFL license ship with the app. The lowercase wordmark uses tight spacing and the warm gradient dot.
+
+Talk, Themes and Words sit in a floating capsule, with an animated selected tab and a soft fade over content below. Settings opens from the top-right control as a sheet. Original vector icons replace text glyphs throughout navigation and primary controls. Themes use an adaptive two-column grid, switching to larger cards with larger text.
+
+The orb has a smooth twelve-point outline, warm blended color, a feathered shadow and two small floating dots. Android 13 and later use an AGSL shader; older versions have a layered-gradient fallback. Orb and onboarding motion pause outside the foreground and respect disabled system animations. Interface tests disable continuous motion for repeatable captures.
+
+Both onboarding steps use dropdown menus over a softly moving warm background. Continue stays at the bottom; content can scroll at larger text sizes. Reply entry opens in a rounded sheet with keyboard padding and a visible send action. Search, settings and other input fields share the same rounded surfaces and warm focus color.
+
 ## Components
 
 - `core/`: serializable models, the v1/v2 archive, language modules, evidence rules, teaching policy, `MeaningController`, `FinalAssessmentQueue`, session limits and usage summary. No Android dependencies, so it runs in JVM tests.

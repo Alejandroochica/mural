@@ -1,11 +1,23 @@
 package chat.mural.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBars
@@ -35,9 +47,10 @@ import androidx.compose.ui.unit.dp
 import chat.mural.MuralViewModel
 import chat.mural.R
 import chat.mural.core.CloudAction
+import chat.mural.AccountViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-private data class Tab(val label: String, val glyph: String, val tag: String)
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MuralApp(
     vm: MuralViewModel,
@@ -46,10 +59,16 @@ fun MuralApp(
     onOpenAppSettings: (() -> Unit)?,
     onExport: () -> Unit,
     onImport: () -> Unit,
+    account: AccountViewModel? = null,
+    onGoogleSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {},
 ) {
     val prefs = vm.archive.preferences
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showConsent by rememberSaveable { mutableStateOf(false) }
+    var showAccount by rememberSaveable { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = tab != 0 && !showSettings && !showAccount) { tab = 0 }
     fun perform(action: CloudAction) {
         when (action) {
             CloudAction.StartVoice -> onRequestMicrophone()
@@ -85,15 +104,9 @@ fun MuralApp(
                     showConsent = true
                 }
             } else {
-                val tabs = listOf(
-                    Tab(stringResource(R.string.talk_tab_title), "●", "tab-talk"),
-                    Tab(stringResource(R.string.topics_tab_title), "✦", "tab-topics"),
-                    Tab(stringResource(R.string.words_tab_title), "▤", "tab-words"),
-                    Tab(stringResource(R.string.settings_tab_title), "≡", "tab-settings"),
-                )
                 Scaffold(
                     containerColor = MuralColors.Cream,
-                    contentWindowInsets = WindowInsets.safeDrawing,
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     topBar = {
                         Row(
                             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 20.dp, vertical = 10.dp),
@@ -101,24 +114,14 @@ fun MuralApp(
                         ) {
                             Brand()
                             Spacer(Modifier.weight(1f))
-                            Text(vm.language.nativeName, color = MuralColors.Secondary, style = MaterialTheme.typography.labelMedium)
-                        }
-                    },
-                    bottomBar = {
-                        NavigationBar(containerColor = MuralColors.CreamRaised) {
-                            tabs.forEachIndexed { index, item ->
-                                NavigationBarItem(
-                                    selected = tab == index,
-                                    onClick = { tab = index },
-                                    icon = { Text(item.glyph, modifier = Modifier.semantics { contentDescription = item.label }) },
-                                    label = { Text(item.label) },
-                                    modifier = Modifier.testTag(item.tag),
-                                )
-                            }
+                            SoftRoundButton(MuralSymbol.Settings, stringResource(R.string.settings_tab_title),
+                                onClick = { showSettings = true }, modifier = Modifier.testTag("tab-settings"), diameter = 44.dp)
                         }
                     },
                 ) { padding ->
-                    Column(Modifier.fillMaxSize().padding(padding)) {
+                    Box(Modifier.fillMaxSize().padding(padding)) {
+                    Column(Modifier.fillMaxSize().then(if (tab == 0) Modifier.padding(bottom =
+                        90.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()) else Modifier)) {
                         when (tab) {
                             0 -> TalkScreen(
                                 vm = vm,
@@ -135,11 +138,24 @@ fun MuralApp(
                                 onCurrentTopic = { query -> withConsent(CloudAction.CurrentTopic(query)) },
                             )
                             2 -> WordsScreen(vm)
-                            else -> SettingsScreen(vm, onExport, onImport, onReviewConsent = {
-                                vm.pendingCloudAction = null
-                                showConsent = true
-                            })
                         }
+                    }
+                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(108.dp)
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, MuralColors.Cream.copy(alpha = .92f)))))
+                    Box(Modifier.align(Alignment.BottomCenter)) { FloatingNavigation(tab) { tab = it } }
+                    }
+                }
+            }
+
+            if (showSettings) {
+                ModalBottomSheet(onDismissRequest = { showSettings = false }, containerColor = MuralColors.Cream,
+                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+                    Column(Modifier.fillMaxHeight(.94f)) {
+                        SettingsScreen(vm, onExport, onImport, onReviewConsent = {
+                            vm.pendingCloudAction = null; showConsent = true
+                        }, onAccount = if (account?.configuration != null) ({
+                            account.refresh(); showAccount = true
+                        }) else null)
                     }
                 }
             }
@@ -158,14 +174,20 @@ fun MuralApp(
                 },
             )
 
+            if (showAccount && account?.configuration != null) {
+                val accountState by account.state.collectAsStateWithLifecycle()
+                AccountSheet(accountState, onDismiss = { showAccount = false }, onSignIn = onGoogleSignIn,
+                    onSignOut = onSignOut, onDelete = account::delete, onRefresh = account::refresh)
+            }
+
             vm.error?.let { message ->
                 AlertDialog(
                     onDismissRequest = vm::dismissError,
                     title = { Text(stringResource(R.string.error_dialog_title)) },
                     text = { Text(message) },
-                    confirmButton = { TextButton(onClick = vm::dismissError) { Text(stringResource(R.string.common_ok)) } },
+                    confirmButton = { MuralTextButton(onClick = vm::dismissError) { Text(stringResource(R.string.common_ok)) } },
                     dismissButton = if (vm.errorNeedsKeySetup) ({
-                        TextButton(onClick = { vm.dismissError(); tab = 3 }) { Text(stringResource(R.string.error_go_to_settings)) }
+                        MuralTextButton(onClick = { vm.dismissError(); showSettings = true }) { Text(stringResource(R.string.error_go_to_settings)) }
                     }) else null,
                 )
             }

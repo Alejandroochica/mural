@@ -100,7 +100,7 @@
     <!-- Topics screen -->
     <string name="topics_tab_title">Themes</string>
     <string name="topics_eyebrow">A place to begin</string>
-    <string name="topics_title">What\'s on your mind?</string>
+    <string name="topics_title">What\'s on\nyour mind?</string>
     <string name="topics_subtitle">Same friend. Somewhere new.</string>
     <string name="topics_just_talk">Just talk</string>
     <string name="topics_search_placeholder">Find a conversation</string>
@@ -225,7 +225,7 @@
 
     <!-- Onboarding -->
     <string name="onboarding_back">Back</string>
-    <string name="onboarding_language_title">What would you like to speak?</string>
+    <string name="onboarding_language_title">What would you\nlike to speak?</string>
     <string name="onboarding_meaning_title">A little help,\nin your language.</string>
     <string name="onboarding_meaning_subtitle">Mural speaks %1$s. Choose the language you read most easily for meanings.</string>
     <string name="onboarding_continue_button">Continue</string>
