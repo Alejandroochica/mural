@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { connectDatabase, transaction } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
-import { startGuestMinutes } from '../src/guest-minutes.js';
+import { startGuestMinutes, linkGuestMinutes } from '../src/guest-minutes.js';
 import { captureWelcomeOffer, minuteBalance, reserveMinutes, finishMinuteReservation } from '../src/minutes.js';
 import { welcomePolicy, updateWelcomePolicy } from '../src/minutes-admin.js';
 import { welcomeFunding, updateWelcomeFunding } from '../src/welcome-funding.js';
@@ -42,6 +42,13 @@ test('restricted runtime can serve signup and minute usage but cannot change ope
       const hold = await reserveMinutes(runtime, guest.guestID, 'runtime-test', 60_000);
       await finishMinuteReservation(runtime, hold, 12_345);
       assert.equal((await minuteBalance(runtime, guest.guestID)).availableMilliseconds, 587_655);
+      const member = randomUUID();
+      await runtime.query('INSERT INTO accounts(id) VALUES($1)', [member]);
+      const linked = await linkGuestMinutes(runtime, member, guest.accessToken);
+      assert.equal(linked.transferredMilliseconds, 587_655);
+      assert.equal((await minuteBalance(runtime, member)).availableMilliseconds, 587_655);
+      await assert.rejects(runtime.query('UPDATE minute_welcome_claims SET allowance_ms=1'), /permission denied/);
+      await assert.rejects(runtime.query("UPDATE minute_welcome_claims SET proof_reference='forged-device'"), /permission denied/);
       for (const table of ['minute_policy', 'welcome_funding_policy', 'minute_campaigns', 'minute_campaign_recipients']) {
         const result = await owner.query('SELECT has_table_privilege($1,$2,$3) AS allowed', [role, `${schema}.${table}`, 'UPDATE']);
         assert.equal(result.rows[0].allowed, false);

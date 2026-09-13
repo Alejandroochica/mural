@@ -11,5 +11,7 @@ GRANT INSERT ON minute_entries, minute_welcome_offers, minute_welcome_claims,
   minute_guest_links, welcome_funding_allocations TO mural_runtime;
 REVOKE UPDATE, DELETE ON minute_entries, minute_welcome_offers, minute_welcome_claims,
   minute_guest_links, welcome_funding_allocations FROM mural_runtime;
+-- A verified guest transfer may move claim ownership, never its device proof or allowance.
+GRANT UPDATE(account_id) ON minute_welcome_claims TO mural_runtime;
 GRANT INSERT, UPDATE ON minute_reservations TO mural_runtime;
 REVOKE DELETE ON minute_reservations FROM mural_runtime;

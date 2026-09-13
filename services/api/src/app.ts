@@ -11,10 +11,18 @@ import { ACCESS_REQUEST_PATH, trustedClientNetwork, type AccessRequests } from '
 import type { AuthAdmission } from './auth-admission.js';
 import { claimWelcomeMinutes, minuteBalance, UnconfiguredMinuteAttestor, type MinuteAttestor } from './minutes.js';
 import { startGuestMinutes, linkGuestMinutes, UnconfiguredGuestMinuteAttestor, type GuestMinuteAttestor } from './guest-minutes.js';
+import { AI_REPORT_BODY_LIMIT, AI_REPORT_PATH, reportNetwork, type AIReports } from './feedback.js';
+import type { MinutePurchases } from './minute-purchases.js';
+import type { StripeMinuteProvider } from './stripe-minute-provider.js';
+import type { PlayMinuteProvider } from './play-minute-provider.js';
+import { HOSTED_HELPER_BODY_LIMIT, type HostedHelpers } from './hosted-helpers.js';
 
-export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; minuteAttestor?: MinuteAttestor; guestMinuteAttestor?: GuestMinuteAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests;
+export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; minuteAttestor?: MinuteAttestor; guestMinuteAttestor?: GuestMinuteAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests; aiReports?: AIReports;
+  hostedHelpers?: HostedHelpers;
+  minuteCommerce?: { purchases: MinutePurchases; stripe?: StripeMinuteProvider; play?: PlayMinuteProvider };
   accounts?: { admission: AuthAdmission; identityVerifier?: typeof verifyIdentity } }
-const accountPaths = new Set(['/v1/auth/challenge', '/v1/auth/exchange', '/v1/auth/sign-out', '/v1/account', '/v1/wallet', '/v1/minutes/welcome', '/v1/minutes/link-guest']);
+const accountPaths = new Set(['/v1/auth/challenge', '/v1/auth/exchange', '/v1/auth/sign-out', '/v1/account', '/v1/wallet', '/v1/minutes/welcome', '/v1/minutes/link-guest',
+  '/v1/minutes/orders', '/v1/minutes/orders/:id', '/v1/minutes/orders/:id/play', '/v1/minutes/play/recover']);
 const objectBody = (request: FastifyRequest): Record<string, unknown> => {
   if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Buffer.isBuffer(request.body)) throw new ServiceError('invalid_request');
   return request.body as Record<string, unknown>;
@@ -36,7 +44,7 @@ export function createApp(services: Services) {
   // No request bodies, Authorization headers, tokens, transcripts, or Stripe payloads are logged.
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    if (request.routeOptions.url === '/v1/webhooks/stripe') return done(null, body);
+    if (['/v1/webhooks/stripe', '/v1/webhooks/stripe/minutes'].includes(request.routeOptions.url ?? '')) return done(null, body);
     try { done(null, JSON.parse(body.toString())); } catch { done(new ServiceError('invalid_json')); }
   });
   const windows = new Map<string, { until: number; count: number }>();
@@ -56,7 +64,7 @@ export function createApp(services: Services) {
       return;
     }
     // This endpoint has separate durable admission limits; Caddy's shared address is not its visitor identity.
-    if (path === ACCESS_REQUEST_PATH || path === '/healthz') return;
+    if (path === ACCESS_REQUEST_PATH || path === AI_REPORT_PATH || path === '/healthz') return;
     let networkKey = request.ip;
     const proxy = services.accounts?.admission.config ?? services.accessRequests?.config;
     if (proxy) {
@@ -75,6 +83,9 @@ export function createApp(services: Services) {
     if (++slot.count > 120) throw new ServiceError('rate_limit', 429);
   });
   app.setErrorHandler((error, _request, reply) => {
+    if (error && typeof error === 'object' && 'code' in error && 'message' in error && error.code === 'P0001' &&
+        error.message === 'minute_purchase_reconciliation_required')
+      return reply.code(409).send({ error: { code: 'minute_purchase_reconciliation_required' } });
     const candidate = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : null;
     const status = error instanceof ServiceError ? error.status : typeof candidate === 'number' && candidate >= 400 && candidate < 500 ? candidate : 500;
     const code = error instanceof ServiceError ? error.code : status < 500 ? 'invalid_request' : 'service_unavailable';
@@ -126,6 +137,17 @@ export function createApp(services: Services) {
   app.get('/v1/auth/providers', async () => ({ google: Boolean(services.accounts && services.auth.googleClientID),
     googleAndroid: Boolean(services.accounts && services.auth.googleAndroidServerClientID && services.auth.googleAndroidClientIDs?.length),
     apple: Boolean(services.accounts && services.auth.appleClientID && services.appleRevoker) }));
+  app.get('/v1/feedback/capabilities', async () => ({ aiReports: Boolean(services.aiReports?.config) }));
+  app.post(AI_REPORT_PATH, { bodyLimit: AI_REPORT_BODY_LIMIT }, async (request, reply) => {
+    const reports = services.aiReports;
+    if (!reports?.config) throw new ServiceError('ai_reports_unavailable', 503);
+    const network = reportNetwork(request.headers, request.raw.socket.remoteAddress ?? request.ip, reports.config);
+    try { return reply.code(202).send(await reports.submit(objectBody(request), network)); }
+    catch (error) {
+      if (error instanceof ServiceError && error.status === 429) reply.header('Retry-After', '3600');
+      throw error;
+    }
+  });
   app.post('/v1/auth/challenge', { bodyLimit: 1024 }, async request => {
     if (Object.keys(objectBody(request)).length) throw new ServiceError('invalid_request');
     return createChallenge(db);
@@ -150,6 +172,58 @@ export function createApp(services: Services) {
   app.post('/v1/minutes/welcome', { bodyLimit: 20_000 }, async request => {
     const account = await authenticate(db, request.headers.authorization);
     return claimWelcomeMinutes(db, account, objectBody(request), services.minuteAttestor ?? new UnconfiguredMinuteAttestor());
+  });
+  app.get('/v1/minutes/products', async request => {
+    const provider = (request.query as Record<string, unknown>).provider;
+    if (provider !== 'stripe' && provider !== 'play') throw new ServiceError('invalid_purchase_provider');
+    const products = services.minuteCommerce?.purchases.products(provider) ?? [];
+    return { available: products.length > 0, billingBasis: 'connected-conversation-time', products: products.map(product => ({
+      sku: product.sku, providerProduct: product.providerProduct, minutes: product.minutes,
+      currency: product.currency, totalMinor: product.totalMinor, environment: product.environment
+    })) };
+  });
+  app.post('/v1/minutes/orders', { bodyLimit: 1024 }, async request => {
+    const account = await authenticate(db, request.headers.authorization), body = objectBody(request);
+    if (Object.keys(body).some(key => !['provider','sku'].includes(key))) throw new ServiceError('invalid_request');
+    const provider = stringField(body, 'provider', 10), key = request.headers['idempotency-key'];
+    if (provider !== 'stripe' && provider !== 'play') throw new ServiceError('invalid_purchase_provider');
+    if (typeof key !== 'string') throw new ServiceError('idempotency_key_required');
+    const commerce = services.minuteCommerce;
+    if (!commerce || !commerce[provider]) throw new ServiceError('minute_purchases_unavailable', 503);
+    const order = await commerce.purchases.createOrder(account, provider, stringField(body, 'sku', 128), key);
+    const payment = provider === 'stripe' ? await commerce.stripe!.checkout(account, order.orderID)
+      : await commerce.play!.prepare(account, order.orderID);
+    return { orderID: order.orderID, minutes: order.minutes, currency: order.currency, totalMinor: order.totalMinor, payment };
+  });
+  app.get('/v1/minutes/orders/:id', async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    if (!services.minuteCommerce) throw new ServiceError('minute_purchases_unavailable', 503);
+    return services.minuteCommerce.purchases.status(account, uuid((request.params as { id: string }).id));
+  });
+  app.post('/v1/minutes/orders/:id/play', { bodyLimit: 8192 }, async request => {
+    const account = await authenticate(db, request.headers.authorization), body = objectBody(request);
+    if (Object.keys(body).some(key => key !== 'purchaseToken')) throw new ServiceError('invalid_request');
+    if (!services.minuteCommerce?.play) throw new ServiceError('minute_purchases_unavailable', 503);
+    const orderID = uuid((request.params as { id: string }).id), purchaseToken = stringField(body, 'purchaseToken', 4096);
+    if (!/^[\x21-\x7e]+$/.test(purchaseToken)) throw new ServiceError('invalid_request');
+    await services.minuteCommerce.purchases.status(account, orderID);
+    return services.minuteCommerce.purchases.reconcile('play', { kind: 'client', accountID: account,
+      orderID, purchaseToken });
+  });
+  app.post('/v1/webhooks/stripe/minutes', async request => {
+    if (!services.minuteCommerce?.stripe) throw new ServiceError('minute_purchases_unavailable', 503);
+    const signature = request.headers['stripe-signature'];
+    if (!Buffer.isBuffer(request.body) || typeof signature !== 'string') throw new ServiceError('invalid_webhook_signature');
+    await services.minuteCommerce.purchases.reconcile('stripe', { kind: 'webhook', raw: request.body, signature });
+    return { received: true };
+  });
+  app.post('/v1/minutes/play/recover', { bodyLimit: 8192 }, async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    if (!services.minuteCommerce?.play) throw new ServiceError('minute_purchases_unavailable', 503);
+    const body = objectBody(request);
+    if (Object.keys(body).length !== 1 || typeof body.purchaseToken !== 'string' || !/^[\x21-\x7e]{1,4096}$/.test(body.purchaseToken))
+      throw new ServiceError('invalid_request');
+    return services.minuteCommerce.purchases.reconcile('play', { kind: 'recovery', accountID: account, purchaseToken: body.purchaseToken });
   });
   app.get('/v1/wallet', async request => {
     const wallet = (await db.query(`SELECT w.balance_nano,w.reserved_nano FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
@@ -188,22 +262,40 @@ export function createApp(services: Services) {
     return { received: true };
   });
   app.post('/v1/trial/eligibility', async request => trialEligibility(db, request.body, services.attestor ?? new UnconfiguredAttestor()));
+  app.get('/v1/live/capabilities', async request => {
+    if (!services.hosted?.minuteFunded || !services.hosted.available || !services.hostedHelpers || !request.headers.authorization) return { hostedMinutes: false };
+    const account = await authenticate(db, request.headers.authorization, true);
+    return { hostedMinutes: services.hosted.allows(account) && services.hostedHelpers.allows(account), experimental: true };
+  });
   app.post('/v1/live/sessions', async request => {
     if (!services.hosted?.available) throw new ServiceError('hosted_voice_not_ready', 503);
-    const account = await authenticate(db, request.headers.authorization), body = objectBody(request);
+    if (services.hosted.minuteFunded && !services.hostedHelpers) throw new ServiceError('hosted_helpers_not_ready', 503);
+    const account = await authenticate(db, request.headers.authorization, services.hosted.minuteFunded), body = objectBody(request);
+    if (Object.keys(body).some(key => !['sdp','language','instructions','history'].includes(key))) throw new ServiceError('invalid_request');
     const key = request.headers['idempotency-key'];
     if (typeof key !== 'string') throw new ServiceError('idempotency_key_required');
-    return services.hosted.create(account, key, stringField(body, 'sdp', 65_536), stringField(body, 'language', 10));
+    return services.hosted.create(account, key, stringField(body, 'sdp', 65_536), stringField(body, 'language', 10),
+      { instructions: body.instructions, history: body.history });
   });
   app.get('/v1/live/sessions/:id', async request => {
     if (!services.hosted) throw new ServiceError('hosted_voice_not_ready', 503);
-    const account = await authenticate(db, request.headers.authorization);
+    const account = await authenticate(db, request.headers.authorization, services.hosted.minuteFunded);
     return services.hosted.status(account, uuid((request.params as { id: string }).id));
+  });
+  app.get('/v1/live/sessions/current', async request => {
+    if (!services.hosted?.minuteFunded) throw new ServiceError('hosted_voice_not_ready', 503);
+    return services.hosted.current(await authenticate(db, request.headers.authorization, true));
   });
   app.post('/v1/live/sessions/:id/close', async request => {
     if (!services.hosted) throw new ServiceError('hosted_voice_not_ready', 503);
-    const account = await authenticate(db, request.headers.authorization);
+    const account = await authenticate(db, request.headers.authorization, services.hosted.minuteFunded);
+    if (Object.keys(objectBody(request)).length) throw new ServiceError('invalid_request');
     return services.hosted.close(account, uuid((request.params as { id: string }).id));
+  });
+  app.post('/v1/live/sessions/:id/helpers', { bodyLimit: HOSTED_HELPER_BODY_LIMIT }, async request => {
+    if (!services.hosted?.minuteFunded || !services.hostedHelpers) throw new ServiceError('hosted_helpers_not_ready', 503);
+    const account = await authenticate(db, request.headers.authorization, true);
+    return services.hostedHelpers.request(account, uuid((request.params as { id: string }).id), request.body);
   });
   app.get('/payment-return', async (_request, reply) => reply.type('text/html').send('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Mural sandbox</title><body><h1>Return to Mural</h1><p>This is a sandbox payment test. The app checks payment confirmation independently.</p></body></html>'));
   return app;

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type Stripe from 'stripe';
 import { connectDatabase, transaction } from '../src/db.js';
@@ -10,6 +10,10 @@ import { appendEntry } from '../src/ledger.js';
 import { OpenAILiveProvider } from '../src/live-provider.js';
 import { HostedVoice } from '../src/hosted-voice.js';
 import { applyStripeEvent } from '../src/payments.js';
+import { appendMinuteEntry } from '../src/minutes.js';
+import { MinutePurchases, type VerifiedMinutePurchase } from '../src/minute-purchases.js';
+import { HostedHelpers } from '../src/hosted-helpers.js';
+import { digest, signOut, authenticate } from '../src/auth.js';
 
 const databaseURL = process.env.TEST_DATABASE_URL;
 if (databaseURL && !new URL(databaseURL).pathname.endsWith('_test')) throw new Error('Dedicated test database required.');
@@ -18,20 +22,26 @@ async function until(predicate: () => Promise<boolean> | boolean) {
   const deadline = Date.now() + 3_000;
   while (!(await predicate())) { if (Date.now() > deadline) throw new Error('Timed out waiting for test condition'); await new Promise(resolve => setTimeout(resolve, 5)); }
 }
-async function fixture(cap = 2_000_000_000n) {
+async function fixture(cap = 2_000_000_000n, minuteAllowance?: number, helperBudget?: bigint) {
   const schema = `voice_test_${randomUUID().replaceAll('-', '')}`, url = new URL(databaseURL!);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const db = connectDatabase(url.toString()); await db.query(`CREATE SCHEMA ${schema}`); await migrate(db);
   const account = randomUUID();
   await db.query('INSERT INTO accounts(id) VALUES($1)', [account]); await db.query('INSERT INTO wallets(account_id) VALUES($1)', [account]);
   await transaction(db, sql => appendEntry(sql, account, `seed:${account}`, 'purchase', 2_000_000_000n, 0n));
+  if (minuteAllowance !== undefined) {
+    await db.query('UPDATE accounts SET is_guest=true WHERE id=$1', [account]);
+    await db.query('DELETE FROM wallets WHERE account_id=$1', [account]);
+    await transaction(db, sql => appendMinuteEntry(sql, account, `minute-seed:${account}`, 'gift', minuteAllowance, 0));
+  }
   const sockets = new Map<string, WebSocket>();
-  let creates = 0, hangups = 0, closes = 0, respondToClose = false, rejectCreate = false, seconds = 0, now = Date.now();
+  let creates = 0, hangups = 0, closes = 0, respondToClose = false, rejectCreate = false, seconds = 0, now = Date.now(), setupDelay = 0;
   const payloads: unknown[] = [];
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer test-no-real-provider-key');
     if (request.url === '/v1/live/sessions') {
       creates++; const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      now += setupDelay;
       if (rejectCreate) { response.writeHead(502); response.end('private-provider-error'); return; }
       payloads.push(JSON.parse(Buffer.concat(chunks).toString()));
       response.writeHead(201, { 'content-type': 'application/json' });
@@ -54,19 +64,30 @@ async function fixture(cap = 2_000_000_000n) {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
   const provider = new OpenAILiveProvider('test-no-real-provider-key', { testOrigin: `http://127.0.0.1:${address.port}`, timeoutMilliseconds: 300 });
+  const helpers = helperBudget === undefined ? undefined : new HostedHelpers(db,
+    { send: async () => { throw new Error('No helper network call expected.'); } }, {
+      accountAllowlist: new Set([account]), aggregateFundingCapNano: cap, helperBudgetNanoPerMinute: helperBudget,
+      maxRequestsPerMinute: 6, maxSearchesPerSession: 0, maxConcurrentPerSession: 2, maxConcurrentGlobal: 4,
+      postSessionMilliseconds: 120_000, inputFramingTokenAllowance: 4096, searchInputTokenAllowance: 1_050_000,
+      timeoutMilliseconds: 1000,
+    });
   let controller = new HostedVoice(db, provider, { accountAllowlist: new Set([account]), lifetimeFundingCapNano: cap,
-    now: () => now, closeGraceMilliseconds: 20 });
+    billingUnit: minuteAllowance === undefined ? 'nanoUSD' : 'milliseconds',
+    helpers, now: () => now, closeGraceMilliseconds: 20 });
   await controller.start();
   return { db, account, payloads, provider, get controller() { return controller; },
     get creates() { return creates; }, get hangups() { return hangups; }, get closes() { return closes; },
     set closeReplies(value: boolean) { respondToClose = value; }, set seconds(value: number) { seconds = value; },
     set rejectCreate(value: boolean) { rejectCreate = value; },
+    set setupDelay(value: number) { setupDelay = value; }, get now() { return now; },
     advance(ms: number) { now += ms; },
     send(id: string, event: unknown) { sockets.get(id)!.send(JSON.stringify(event)); },
     disconnect(id: string) { sockets.get(id)!.terminate(); },
     async restart() { await controller.stop(); controller = new HostedVoice(db, provider,
-      { accountAllowlist: new Set([account]), lifetimeFundingCapNano: cap, now: () => now, closeGraceMilliseconds: 20 }); await controller.start(); },
+      { accountAllowlist: new Set([account]), lifetimeFundingCapNano: cap,
+        billingUnit: minuteAllowance === undefined ? 'nanoUSD' : 'milliseconds', helpers, now: () => now, closeGraceMilliseconds: 20 }); await controller.start(); },
     async wallet() { return (await db.query('SELECT balance_nano,reserved_nano FROM wallets WHERE account_id=$1', [account])).rows[0]; },
+    async minutes() { return (await db.query('SELECT balance_ms,reserved_ms FROM minute_wallets WHERE account_id=$1', [account])).rows[0]; },
     async cleanup() {
       await controller.stop(); for (const socket of sockets.values()) socket.terminate();
       await new Promise<void>(resolve => websocket.close(() => resolve()));
@@ -75,13 +96,56 @@ async function fixture(cap = 2_000_000_000n) {
     }
   };
 }
+integration('minute admission reserves helpers before any provider call and rolls back an unfunded conversation', async () => {
+  const f = await fixture(1_000_000_000n, 600_000, 60_000_000n);
+  try {
+    await assert.rejects(f.controller.create(f.account, 'unfunded-helper-budget', 'v=0', 'es-ES'), { code: 'hosted_funding_cap_reached' });
+    assert.equal(f.creates, 0);
+    assert.deepEqual(await f.minutes(), { balance_ms: '600000', reserved_ms: '0' });
+    for (const table of ['hosted_sessions', 'hosted_helper_sessions', 'minute_reservations'])
+      assert.equal((await f.db.query(`SELECT count(*) AS total FROM ${table}`)).rows[0].total, '0');
+  } finally { await f.cleanup(); }
+});
+integration('sign-out records a durable stop before revocation so a discarded bearer cannot strand live audio', async () => {
+  const f = await fixture();
+  try {
+    const token = randomBytes(32).toString('base64url'), authorization = `Bearer ${token}`;
+    await f.db.query("INSERT INTO auth_sessions(id,account_id,token_hash,expires_at) VALUES($1,$2,$3,now()+interval '1 hour')", [randomUUID(), f.account, digest(token)]);
+    const live = await f.controller.create(f.account, 'sign-out-live-session', 'v=0', 'es-ES');
+    await signOut(f.db, authorization);
+    await assert.rejects(authenticate(f.db, authorization), { code: 'sign_in_required' });
+    const row = (await f.db.query('SELECT close_reason,close_requested_at FROM hosted_sessions WHERE id=$1', [live.sessionID])).rows[0];
+    assert.equal(row.close_reason, 'sign_out'); assert.ok(row.close_requested_at);
+    f.seconds = 3; f.closeReplies = true; await f.controller.tick();
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.ok(f.closes > 0); assert.equal((await f.wallet()).reserved_nano, '0');
+  } finally { await f.cleanup(); }
+});
+integration('voice admission counts existing helper liability and activates its original budget with the real deadline', async () => {
+  const f = await fixture(1_000_000_000n, 1_200_000, 50_000_000n);
+  try {
+    f.setupDelay = 12_000;
+    const live = await f.controller.create(f.account, 'funded-helper-budget', 'v=0', 'es-ES');
+    const budget = (await f.db.query('SELECT * FROM hosted_helper_sessions WHERE session_id=$1', [live.sessionID])).rows[0];
+    assert.equal(budget.budget_nano, '500000000'); assert.equal(budget.liability_nano, '500000000');
+    assert.equal(budget.activation_pending, false);
+    assert.equal(budget.expires_at.getTime(), new Date(live.deadline).getTime() + 120_000);
+    f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 15 } });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    await assert.rejects(f.controller.create(f.account, 'must-include-helper-liability', 'v=0', 'es-ES'), { code: 'hosted_funding_cap_reached' });
+    assert.equal(f.creates, 1); assert.equal((await f.minutes()).reserved_ms, '0');
+  } finally { await f.cleanup(); }
+});
 integration('real HTTP/WebSocket adapter meters snapshots once, releases hold, and retains no conversation content', async () => {
   const f = await fixture();
   try {
-    const live = await f.controller.create(f.account, 'voice-request-one', 'v=0\r\nsensitive-offer', 'es-ES');
+    const live = await f.controller.create(f.account, 'voice-request-one', 'v=0\r\nsensitive-offer', 'es-ES',
+      { instructions: 'private-teaching-instructions', history: [{ type:'message', role:'user', content:[{type:'input_text',text:'private-history'}] }] });
     assert.equal((await f.wallet()).reserved_nano, '500000000');
     assert.equal((f.payloads[0] as any).session.store, false);
     assert.equal((f.payloads[0] as any).session.delegation.type, 'client');
+    assert.ok((f.payloads[0] as any).session.instructions.includes('private-teaching-instructions'));
+    assert.equal((f.payloads[0] as any).session.input[0].content[0].text, 'private-history');
     f.send(live.providerSessionID, { type: 'session.output_transcript.delta', delta: 'private-test-sentence' });
     f.send(live.providerSessionID, { type: 'session.input_audio.append', audio: 'private-audio-marker' });
     for (const seconds of [12, 12, 10, 20]) f.send(live.providerSessionID, { type: 'session.usage.updated', usage: { seconds } });
@@ -92,7 +156,7 @@ integration('real HTTP/WebSocket adapter meters snapshots once, releases hold, a
     assert.deepEqual(await f.wallet(), { balance_nano: '1983333333', reserved_nano: '0' });
     const records = (await f.db.query('SELECT row_to_json(h) AS row FROM hosted_sessions h')).rows;
     const all = JSON.stringify(records);
-    for (const marker of ['private-test-sentence', 'private-audio-marker', 'private-instructions', 'sensitive-offer']) assert.equal(all.includes(marker), false);
+    for (const marker of ['private-test-sentence', 'private-audio-marker', 'private-instructions', 'sensitive-offer', 'private-teaching-instructions', 'private-history']) assert.equal(all.includes(marker), false);
     assert.equal((await f.db.query("SELECT id FROM ledger WHERE kind='settle'")).rowCount, 1);
     await assert.rejects(f.controller.create(f.account, 'voice-request-one', 'v=0', 'es-ES'), { code: 'live_request_already_created' });
     assert.equal(f.creates, 1);
@@ -203,5 +267,102 @@ integration('regressing final usage does not settle or refund a hold; trusted re
     f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 35 } });
     await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
     assert.equal((await f.controller.status(f.account, live.sessionID)).chargedNanoUSD, '29166667');
+  } finally { await f.cleanup(); }
+});
+integration('minute mode reserves a guest remainder and charges exact connected time independently of provider cost', async () => {
+  const f = await fixture(2_000_000_000n, 90_000);
+  try {
+    const live = await f.controller.create(f.account, 'minute-first-key', 'v=0', 'es-ES');
+    assert.equal(live.reservedMilliseconds, 90_000);
+    assert.deepEqual(await f.minutes(), { balance_ms: '90000', reserved_ms: '90000' });
+    assert.equal(await f.wallet(), undefined);
+    for (const seconds of [5, 5, 3]) f.send(live.providerSessionID, { type: 'session.usage.updated', usage: { seconds } });
+    f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 5.25 } });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.deepEqual(await f.minutes(), { balance_ms: '84750', reserved_ms: '0' });
+    const status = await f.controller.status(f.account, live.sessionID);
+    assert.equal(status.chargedMilliseconds, 5_250);
+    assert.equal(status.providerCostNanoUSD, '12500000');
+    assert.equal((await f.db.query("SELECT 1 FROM minute_entries WHERE kind='settle'")).rowCount, 1);
+    await assert.rejects(f.controller.create(f.account, 'minute-first-key', 'v=0', 'es-ES'), { code: 'live_request_already_created' });
+    assert.equal(f.creates, 1);
+  } finally { await f.cleanup(); }
+});
+integration('minute deadline closes at the available remainder, keeps an uncertain hold, and absorbs cutoff overrun', async () => {
+  const f = await fixture(2_000_000_000n, 20_000);
+  try {
+    const live = await f.controller.create(f.account, 'minute-timeout-key', 'v=0', 'de-DE');
+    f.advance(20_001); await f.controller.tick(); await until(() => f.closes > 0);
+    f.advance(21); await f.controller.tick(); assert.ok(f.hangups > 0);
+    assert.deepEqual(await f.minutes(), { balance_ms: '20000', reserved_ms: '20000' });
+    await assert.rejects(f.controller.create(f.account, 'minute-next-key', 'v=0', 'de-DE'), { code: 'live_session_unresolved' });
+    f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 21 } });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
+    assert.equal((await f.controller.status(f.account, live.sessionID)).chargedMilliseconds, 20_000);
+    await assert.rejects(f.controller.create(f.account, 'minute-empty-key', 'v=0', 'de-DE'), { code: 'insufficient_minutes' });
+    assert.equal(f.creates, 1);
+  } finally { await f.cleanup(); }
+});
+integration('minute-funded recovery closes the original provider session and settles its reservation once', async () => {
+  const f = await fixture(2_000_000_000n, 1_800_000);
+  try {
+    const live = await f.controller.create(f.account, 'minute-recovery-key', 'v=0', 'fr-FR');
+    assert.equal(live.reservedMilliseconds, 600_000);
+    await f.restart(); assert.equal(f.creates, 1);
+    f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 40 } });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.deepEqual(await f.minutes(), { balance_ms: '1760000', reserved_ms: '0' });
+    assert.equal((await f.db.query("SELECT 1 FROM minute_entries WHERE kind='settle'")).rowCount, 1);
+  } finally { await f.cleanup(); }
+});
+integration('minute mode never releases a hold after an uncertain provider create', async () => {
+  const f = await fixture(2_000_000_000n, 60_000);
+  try {
+    f.rejectCreate = true;
+    await assert.rejects(f.controller.create(f.account, 'minute-uncertain-key', 'v=0', 'it-IT'), { code: 'provider_session_unconfirmed' });
+    await f.restart();
+    assert.deepEqual(await f.minutes(), { balance_ms: '60000', reserved_ms: '60000' });
+    await assert.rejects(f.controller.create(f.account, 'minute-uncertain-key', 'v=0', 'it-IT'), { code: 'live_request_already_created' });
+    assert.equal(f.creates, 1);
+  } finally { await f.cleanup(); }
+});
+integration('short minute remainders receive a separate setup window and authoritative usage cutoff', async () => {
+  const f = await fixture(2_000_000_000n, 2_000);
+  try {
+    f.setupDelay = 3_000;
+    const live = await f.controller.create(f.account, 'minute-short-setup', 'v=0', 'pt-BR');
+    assert.equal(new Date(live.deadline).getTime() - f.now, 2_000);
+    f.send(live.providerSessionID, { type: 'session.usage.updated', usage: { seconds: 2 } });
+    await until(() => f.closes > 0);
+    f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 2 } });
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
+  } finally { await f.cleanup(); }
+});
+integration('refunding a minute purchase during speech closes and recovers released time atomically', async () => {
+  const f = await fixture(2_000_000_000n, 0);
+  try {
+    await f.db.query('UPDATE accounts SET is_guest=false WHERE id=$1', [f.account]);
+    const scope = { provider: 'stripe' as const, environment: 'test' as const, merchant: 'acct_test' };
+    let evidence: VerifiedMinutePurchase;
+    const purchases = new MinutePurchases(f.db, { salesEnabled: true,
+      catalog: [{ ...scope, sku: 'minute-test', providerProduct: 'price_test', minutes: 30, currency: 'usd', totalMinor: 300 }],
+      verifiers: [{ ...scope, async verify() { return evidence; } }] });
+    const order = await purchases.createOrder(f.account, 'stripe', 'minute-test', 'refund-live-order');
+    evidence = { ...scope, orderID: order.orderID, transactionID: 'cs_minute_test', eventID: 'evt_paid', providerProduct: 'price_test',
+      quantity: 1, currency: 'usd', totalMinor: 300, state: 'purchased', refundedMinor: 0 };
+    await purchases.reconcile('stripe', {});
+    const live = await f.controller.create(f.account, 'minute-refund-live', 'v=0', 'en-US');
+    evidence = { ...evidence, eventID: 'evt_refunded', refundedMinor: 300, state: 'voided' };
+    await purchases.reconcile('stripe', {});
+    assert.deepEqual(await f.minutes(), { balance_ms: '600000', reserved_ms: '600000' });
+    f.seconds = 5; f.closeReplies = true; await f.controller.tick();
+    await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
+    assert.deepEqual(await f.minutes(), { balance_ms: '0', reserved_ms: '0' });
+    const status = await purchases.status(f.account, order.orderID);
+    assert.equal(status.reversalOutstandingMilliseconds, 5_000);
+    assert.equal(status.reversedMilliseconds, 1_795_000);
+    assert.equal((await f.db.query('SELECT close_reason FROM hosted_sessions WHERE id=$1', [live.sessionID])).rows[0].close_reason, 'funding_reversed');
   } finally { await f.cleanup(); }
 });

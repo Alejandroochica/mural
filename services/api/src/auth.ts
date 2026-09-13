@@ -112,6 +112,9 @@ export async function signOut(db: Database, authorization?: string): Promise<voi
   const account = await authenticate(db, authorization);
   await transaction(db, async sql => {
     await lockWallet(sql, account, true); await assertSession(sql, account, authorization!);
+    // Server-side closure survives a lost sign-out response or a client that has already discarded its bearer.
+    await sql.query(`UPDATE hosted_sessions SET close_requested_at=COALESCE(close_requested_at,now()),
+      close_reason=COALESCE(close_reason,'sign_out') WHERE account_id=$1 AND state<>'closed'`, [account]);
     await sql.query('UPDATE auth_sessions SET revoked_at=now() WHERE account_id=$1', [account]);
   });
 }
@@ -132,7 +135,12 @@ export async function deleteAccount(db: Database, account: string, appleRevoker?
     if (pending || wallet.balance !== 0n || wallet.reserved !== 0n) throw new ServiceError('unresolved_billing', 409);
     const minutes = (await sql.query('SELECT balance_ms,reserved_ms FROM minute_wallets WHERE account_id=$1', [account])).rows[0];
     const minutePurchase = (await sql.query("SELECT 1 FROM minute_entries WHERE account_id=$1 AND kind='purchase' LIMIT 1", [account])).rowCount;
-    if (Number(minutes?.reserved_ms ?? 0) > 0 || (minutePurchase && Number(minutes?.balance_ms ?? 0) > 0))
+    // The account lock serializes deletion with order creation, fulfillment and refund recovery.
+    // A missing transaction is an unpaid/uncertain order, not evidence that no charge can arrive.
+    const unresolvedMinuteOrder = (await sql.query(`SELECT 1 FROM minute_purchase_orders o
+      LEFT JOIN minute_purchase_transactions p ON p.order_id=o.id WHERE o.account_id=$1
+      AND (p.order_id IS NULL OR p.state='pending' OR p.recovered_ms<LEAST(p.reversal_target_ms,p.granted_ms)) LIMIT 1`, [account])).rowCount;
+    if (unresolvedMinuteOrder || Number(minutes?.reserved_ms ?? 0) > 0 || (minutePurchase && Number(minutes?.balance_ms ?? 0) > 0))
       throw new ServiceError('unresolved_billing', 409);
     const apple = (await sql.query("SELECT subject FROM identities WHERE account_id=$1 AND provider='apple'", [account])).rows[0];
     if (apple) {
@@ -147,6 +155,7 @@ export async function deleteAccount(db: Database, account: string, appleRevoker?
     const records = await sql.query(`SELECT 1 FROM ledger WHERE account_id=$1 UNION ALL SELECT 1 FROM reservations WHERE account_id=$1
       UNION ALL SELECT 1 FROM checkout_orders WHERE account_id=$1 UNION ALL SELECT 1 FROM usage_records WHERE account_id=$1
       UNION ALL SELECT 1 FROM hosted_sessions WHERE account_id=$1 UNION ALL SELECT 1 FROM minute_entries WHERE account_id=$1
+      UNION ALL SELECT 1 FROM minute_purchase_orders WHERE account_id=$1
       UNION ALL SELECT 1 FROM minute_campaign_recipients WHERE account_id=$1
       UNION ALL SELECT 1 FROM minute_guest_links WHERE member_account_id=$1 OR guest_account_id=$1 LIMIT 1`, [account]);
     if (records.rowCount) {
