@@ -229,6 +229,8 @@ fun AIConsentDialog(onAgree: () -> Unit, onDecline: () -> Unit) {
                     color = MuralColors.Orange,
                     modifier = Modifier.clickable { uriHandler.openUri("https://mural.chat/privacy/") }.padding(vertical = 8.dp),
                 )
+                Text(stringResource(R.string.consent_adult_confirmation), style = MaterialTheme.typography.bodySmall,
+                    color = MuralColors.Secondary, modifier = Modifier.testTag("adult-confirmation"))
                 Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = onAgree,

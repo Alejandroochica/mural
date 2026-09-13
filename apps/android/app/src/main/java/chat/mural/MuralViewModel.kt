@@ -82,20 +82,36 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private val hostedConfiguration = HostedConfiguration.parse(BuildConfig.MANAGED_API_ORIGIN)
     private val accountConfiguration = ManagedAccountConfiguration.parse(BuildConfig.MANAGED_API_ORIGIN, BuildConfig.GOOGLE_SERVER_CLIENT_ID)
     private val memberSessions = accountConfiguration?.let { AccountSessionStore(application, it.origin.toString()) }
-    private val accountService = accountConfiguration?.let(::ManagedAccountClient)
+    private val guests = hostedConfiguration?.let { config ->
+        GuestMinuteController(GuestInstallationStore(application, config.origin.toString()), GuestMinuteClient(config), {
+            java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(java.security.SecureRandom()::nextBytes))
+        })
+    }
+    var guestState by mutableStateOf(GuestMinuteState()); private set
+    var showMinuteAccess by mutableStateOf(false); private set
+    private var selectedAccount = AccountState(busy = true)
+    private var accessJob: Job? = null
     private val hostedBindings = HostedConversationBindings(viewModelScope)
     private var hostedSessionIDs = emptySet<String>()
     private var pendingHostedOwnerID: String? = null
     /** Reauthentication may renew this account only; another account cannot replace an unresolved owner. */
-    val pendingHostedOwnerAccountID: String? get() = pendingHostedOwnerID
+    suspend fun pendingMemberForSignIn(): String? {
+        guests?.expectedMemberID()?.let { return it }
+        val pending = pendingHostedOwnerID ?: return null
+        if (guests?.owns(pending) != true) return pending
+        // Renewal retains the same guest identity, allowing an interrupted conversation to settle
+        // before Google login. A guest UUID is never sent as Google's expected member identity.
+        if (guests.session(pending) == null) guests.acquire()
+        return null
+    }
     private var reconciliationJob: Job? = null
     var conversationProvider by mutableStateOf(ConversationProvider.PERSONAL_KEY); private set
     var hostedReadiness by mutableStateOf(HostedReadiness()); private set
     private val readiness = HostedReadinessController(viewModelScope,
-        readSession = { memberSessions?.read() },
+        readSession = { availableHostedOwner() },
         fetch = { owner ->
             val enabled = hostedClient(owner.accountID).available()
-            val balance = if (enabled) accountService?.minutes(owner) else null
+            val balance = if (enabled) hostedBalance(owner) else null
             HostedReadiness(owner.accountID, balance?.availableMilliseconds ?: 0, enabled)
         }, changed = { hostedReadiness = it })
     var accountChangeBlocked by mutableStateOf(true); private set
@@ -141,11 +157,12 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private var generation = 0
 
     init {
+        guests?.let { controller -> viewModelScope.launch { controller.state.collect { guestState = it } } }
         viewModelScope.launch {
             try {
                 val loaded = withContext(Dispatchers.IO) { repository.load() to credentials.hasKey }
                 archive = loaded.first.archive
-                val providers = providerStore.read()
+                val providers = providerStore.read(if (loaded.second) ConversationProvider.PERSONAL_KEY else ConversationProvider.HOSTED_MINUTES)
                 hostedSessionIDs = providers.hostedIDs
                 pendingHostedOwnerID = providers.pendingOwnerID
                 accountChangeBlocked = providers.pendingOwnerID != null
@@ -298,17 +315,72 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (provider == ConversationProvider.HOSTED_MINUTES) refreshHostedReadiness()
     }
 
-    fun onAccountChanged(account: AccountState) = readiness.selectAccount(account.accountID, account.busy)
-    fun refreshHostedReadiness() = readiness.refresh()
-
-    private suspend fun requireMember(): AccountSession = memberSessions?.read()
-        ?.takeIf { it.isValid(System.currentTimeMillis()) } ?: throw HostedFailure.SignInRequired
+    fun onAccountChanged(account: AccountState) {
+        selectedAccount = account
+        // Invalidate immediately. Slow guest or member reads may not restore access during a transition.
+        readiness.selectAccount(null, true)
+        accessJob?.cancel()
+        if (!account.busy) refreshHostedReadiness()
+    }
+    fun refreshHostedReadiness() {
+        if (selectedAccount.busy || !storageReady) return
+        accessJob?.cancel()
+        accessJob = viewModelScope.launch {
+            try {
+                val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) }
+                if (member != null) {
+                    if (guests?.needsLink() == true) {
+                        readiness.selectAccount(null, true)
+                        if (pendingHostedOwnerID != null && !settleHostedSessions()) return@launch
+                        if (!guests.linkTo(member)) return@launch
+                    }
+                    if (selectedAccount.busy) return@launch
+                    readiness.selectAccount(member.accountID, false)
+                    readiness.refresh()
+                } else {
+                    if (archive.preferences.aiConsentVersion != 1 || conversationProvider != ConversationProvider.HOSTED_MINUTES) {
+                        readiness.selectAccount(null, false); return@launch
+                    }
+                    guests?.acquire()
+                    if (selectedAccount.busy) return@launch
+                    val guest = guests?.session()
+                    readiness.selectAccount(guest?.accountID, false)
+                    readiness.refresh()
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { readiness.selectAccount(null, false) }
+        }
+    }
+    fun dismissMinuteAccess() { showMinuteAccess = false }
+    fun needsMinuteAccess(): Boolean {
+        if (conversationProvider != ConversationProvider.HOSTED_MINUTES || isRunning) return false
+        if (hostedReadiness.ready && !selectedAccount.busy) return false
+        showMinuteAccess = true; refreshHostedReadiness(); return true
+    }
+    /** Durable guest transfer survives Activity cancellation and retries before the member can spend. */
+    suspend fun completeGuestSignIn(): Boolean {
+        val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) } ?: return false
+        val linked = guests?.linkTo(member) ?: true
+        if (!linked) showMinuteAccess = true
+        return linked
+    }
+    private suspend fun availableHostedOwner(): AccountSession? {
+        val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) }
+        if (member != null) return member.takeIf { guests?.needsLink() != true }
+        return guests?.session()
+    }
+    private suspend fun requireHostedOwner(ownerID: String? = null): AccountSession {
+        // The pending guest lease must still be closable after Google has stored a member bearer.
+        val guest = if (ownerID != null) guests?.session(ownerID) else null
+        return guest ?: availableHostedOwner()?.takeIf { ownerID == null || it.accountID == ownerID }
+            ?: throw HostedFailure.SignInRequired
+    }
+    private suspend fun hostedBalance(owner: AccountSession): MinuteBalance =
+        GuestMinuteClient(hostedConfiguration ?: throw HostedFailure.Unavailable).balance(owner)
 
     private fun hostedClient(ownerID: String): HostedAPIClient {
         val config = hostedConfiguration ?: throw HostedFailure.Unavailable
-        return HostedAPIClient(config.origin, {
-            requireMember().takeIf { it.accountID == ownerID } ?: throw HostedFailure.SignInRequired
-        }, okhttp3.OkHttpClient())
+        return HostedAPIClient(config.origin, { requireHostedOwner(ownerID) }, okhttp3.OkHttpClient())
     }
     private fun binding(lease: HostedAPIClient.HostedLease) = HostedConversationBindings.Lease(
         lease.sessionID, lease.teaching, lease::requestClose, lease::status, lease.deadlineMilliseconds)
@@ -350,7 +422,11 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         }
         hostedBindings.disableHelpers(); meanings.reset()
         hostedFinalAssessmentJobs.values.toList().forEach { it.cancel() }; hostedFinalAssessmentJobs.clear()
-        if (!accountChangeBlocked) return true
+        if (!accountChangeBlocked) {
+            val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) }
+            if (member != null && guests?.needsLink() == true && !completeGuestSignIn()) return false
+            return true
+        }
         if (isRunning && (session?.id in hostedSessionIDs || conversationProvider == ConversationProvider.HOSTED_MINUTES)) {
             updateSession { it.endReason = "Account change" }; finish(false)
         }
@@ -365,7 +441,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         reconciliationJob = viewModelScope.launch {
             // Wait for cancelled creation/provenance writes before clearing the durable pending marker.
             connectionJob?.join()
-            settleHostedSessions()
+            if (settleHostedSessions()) refreshHostedReadiness()
         }
     }
 
@@ -374,7 +450,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (ownerID == null) { accountChangeBlocked = false; return true }
         accountChangeBlocked = true
         return try {
-            val owner = requireMember()
+            val owner = requireHostedOwner(ownerID)
             if (owner.accountID != ownerID) return false
             for (id in hostedBindings.openSessionIDs) if (!hostedBindings.closeAndConfirm(id)) return false
             // An interrupted create may have committed remotely without returning its lease locally.
@@ -388,11 +464,11 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 } ?: false
                 if (!closed) return false
             }
-            val balance = accountService?.minutes(owner) ?: return false
+            val balance = hostedBalance(owner)
             if (balance.reservedMilliseconds != 0L) return false
             providerStore.clearPending()
             pendingHostedOwnerID = null; accountChangeBlocked = false
-            refreshHostedReadiness()
+            readiness.refresh()
             true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { false }
@@ -423,7 +499,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         generation++; meanings.reset()
         if (languageChanged) resetConversation()
         archive = archive.copy(preferences = preferences.copy(interests = preferences.interests.take(500)))
-        persist(); scheduleTranslation(); recoverFinalAssessments()
+        persist(); scheduleTranslation(); recoverFinalAssessments(); refreshHostedReadiness()
     }
     fun selectLanguage(id: String) {
         if (!isRunning && LanguageRegistry.get(id) != null) updatePreferences(archive.preferences.copy(learningLanguageID = id))
@@ -484,7 +560,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (!ConversationProviderPolicy.canStart(choice, hasKey, hostedReadiness)) {
             if (choice == ConversationProvider.HOSTED_MINUTES) {
-                refreshHostedReadiness(); presentError(getApplication<Application>().getString(R.string.hosted_not_ready))
+                showMinuteAccess = true; refreshHostedReadiness()
             } else presentError(getApplication<Application>().getString(R.string.error_missing_key), true)
             return
         }
@@ -497,10 +573,10 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         connectionJob = viewModelScope.launch {
             try {
                 val provider: LiveSessionProvider = if (choice == ConversationProvider.PERSONAL_KEY) api else {
-                    val owner = requireMember()
-                    if (owner.accountID != hostedReadiness.accountID) throw HostedFailure.SignInRequired
+                    val owner = requireHostedOwner()
+                    if (selectedAccount.busy || owner.accountID != hostedReadiness.accountID) throw HostedFailure.SignInRequired
                     val hosted = hostedClient(owner.accountID)
-                    val balance = accountService?.minutes(owner) ?: throw HostedFailure.Unavailable
+                    val balance = hostedBalance(owner)
                     if (balance.availableMilliseconds <= 0 || !hosted.available()) throw HostedFailure.Unavailable
                     // Commit provider provenance and the unresolved-owner marker before making a paid create.
                     hostedSessionIDs = hostedSessionIDs + id

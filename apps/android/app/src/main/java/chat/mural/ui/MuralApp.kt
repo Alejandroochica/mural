@@ -79,7 +79,7 @@ fun MuralApp(
     BackHandler(enabled = tab != 0 && !showSettings && !showAccount && !showMinutes) { tab = 0 }
     fun perform(action: CloudAction) {
         when (action) {
-            CloudAction.StartVoice -> onRequestMicrophone()
+            CloudAction.StartVoice -> if (!vm.needsMinuteAccess()) onRequestMicrophone()
             is CloudAction.SendTyped -> vm.sendTyped(action.text)
             is CloudAction.Lookup -> vm.lookup(action.word, action.sentence)
             is CloudAction.CurrentTopic -> vm.currentTopic(action.query)
@@ -187,6 +187,23 @@ fun MuralApp(
                 },
             )
 
+            if (vm.showMinuteAccess && !showAccount && !showSettings && !showMinutes) {
+                val memberState = account?.state?.collectAsStateWithLifecycle()?.value
+                GuestMinutesSheet(vm.guestState, memberState?.signedIn == true,
+                    memberRemaining = memberState?.minutes?.availableMilliseconds,
+                    busy = accountTransitionBusy || memberState?.busy == true || vm.hostedReadiness.checking,
+                    ready = vm.hostedReadiness.ready, onContinue = {
+                        vm.dismissMinuteAccess(); onRequestMicrophone()
+                    }, onSignIn = if (account?.configuration != null) ({
+                        vm.dismissMinuteAccess(); showAccount = true; onGoogleSignIn()
+                    }) else null,
+                    onBuy = if (purchases?.enabled == true) ({
+                        vm.dismissMinuteAccess(); purchases.refresh(); showMinutes = true
+                    }) else null,
+                    onRetry = vm::refreshHostedReadiness,
+                    onSettings = { vm.dismissMinuteAccess(); showSettings = true }, onDismiss = vm::dismissMinuteAccess)
+            }
+
             if (showAccount && !showMinutes && account?.configuration != null) {
                 val accountState by account.state.collectAsStateWithLifecycle()
                 AccountSheet(accountState, onDismiss = { showAccount = false }, onSignIn = onGoogleSignIn,
@@ -194,7 +211,9 @@ fun MuralApp(
                     transitionBusy = accountTransitionBusy, provider = vm.conversationProvider,
                     hostedAvailable = vm.hostedReadiness.enabled, conversationRunning = vm.isRunning,
                     onSelectProvider = vm::selectConversationProvider,
-                    onBuyMinutes = if (purchases?.enabled == true) ({ purchases.refresh(); showMinutes = true }) else null)
+                    onBuyMinutes = if (purchases?.enabled == true) ({ purchases.refresh(); showMinutes = true }) else null,
+                    guestMinutes = vm.guestState.takeIf { it.status == chat.mural.core.GuestMinuteStatus.READY }?.remainingMilliseconds,
+                    memberAlreadyClaimedTrial = vm.guestState.status == chat.mural.core.GuestMinuteStatus.MEMBER_TRIAL_USED)
             }
             if (showMinutes && purchases?.enabled == true && account != null) {
                 val purchaseState by purchases.state.collectAsStateWithLifecycle()

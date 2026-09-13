@@ -47,7 +47,7 @@ Transport uses HTTPS/WebRTC encryption. This is not a claim of end-to-end encryp
 | Contact | hi@hackmamba.io; https://mural.chat/ |
 | Privacy URL | https://mural.chat/privacy/; final Android and hosted disclosures require review |
 | Ads | No ads in the reviewed build; verify merged dependencies before submission |
-| Target audience | Owner must select supported ages. Recommend adult launch while the open-ended AI experience and safety process are evaluated. Do not automatically select children or every age group |
+| Target audience | Owner approved adults 18+ for the first release. The onboarding consent includes this confirmation. The Play questionnaire is pending its prerequisite reviewer-access section |
 | Content rating | Complete the current IARC questionnaire for the actual conversational AI and current-topic behavior; no rating has been assigned here |
 | App access | Working reviewer access must cover speech and any account/purchase restrictions without requiring reviewers to fund an OpenAI account. Keep credentials and instructions private |
 | Account deletion | In-app account deletion exists. A functional web request path must be verified and entered if accounts are offered. A prominent support-email flow may qualify; the page must explain Mural's deletion process |

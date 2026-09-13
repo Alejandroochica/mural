@@ -69,9 +69,6 @@ export async function exchangeIdentity(db: Database, provider: Provider, token: 
     // Recovery may renew only its original owner, before any new signup, grant or token is issued.
     if (expectedAccountID !== undefined && account !== expectedAccountID) throw new ServiceError('same_account_required', 409);
     if (!account) {
-      await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-account-capacity'))");
-      const count = Number((await sql.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL AND NOT is_guest')).rows[0].count);
-      if (count >= 10_000) throw new ServiceError('account_capacity_reached', 503);
       account = randomUUID();
       await sql.query('INSERT INTO accounts(id,email) VALUES($1,$2)', [account, identity.email]);
       await sql.query('INSERT INTO identities(provider,subject,account_id) VALUES($1,$2,$3)', [identity.provider, identity.subject, account]);

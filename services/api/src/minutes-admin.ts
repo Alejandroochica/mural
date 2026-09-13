@@ -4,10 +4,12 @@ import { connectDatabase, transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
 import { appendMinuteEntry, millisecondsForMinutes, MS_PER_MINUTE } from './minutes.js';
 import { welcomeFunding, updateWelcomeFunding } from './welcome-funding.js';
+import { aiPricingPolicy, updateAIPricingPolicy } from './ai-top-up-pricing.js';
 
 export interface WelcomePolicy {
   version: number; welcomeEnabled: boolean; welcomeMinutes: number;
-  dailyWelcomeBudgetMinutes: number; lifetimeWelcomeBudgetMinutes: number;
+  /** Legacy input accepted for older operator clients; neither field controls grant admission. */
+  dailyWelcomeBudgetMinutes?: number; lifetimeWelcomeBudgetMinutes?: number;
 }
 export interface CampaignRequest {
   id: string; actor: string; reason: string; minutesPerUser: number; maxTotalMinutes: number;
@@ -21,30 +23,47 @@ function auditText(value: unknown): asserts value is string {
 }
 const budget = (value: number) => Number.isSafeInteger(value) && value >= 0 && value <= 144_000_000;
 const policyFromRow = (row: any): WelcomePolicy => ({ version: row.version, welcomeEnabled: row.welcome_enabled,
-  welcomeMinutes: Number(row.welcome_ms) / MS_PER_MINUTE, dailyWelcomeBudgetMinutes: Number(row.daily_welcome_budget_ms) / MS_PER_MINUTE,
-  lifetimeWelcomeBudgetMinutes: Number(row.lifetime_welcome_budget_ms) / MS_PER_MINUTE });
+  welcomeMinutes: Number(row.welcome_ms) / MS_PER_MINUTE });
 export async function welcomePolicy(db: Database): Promise<WelcomePolicy> {
   return policyFromRow((await db.query('SELECT * FROM minute_policy WHERE singleton')).rows[0]);
 }
 export async function updateWelcomePolicy(db: Database, policy: WelcomePolicy, actor: string, reason: string) {
   auditText(actor); auditText(reason);
   if (typeof policy.welcomeEnabled !== 'boolean' || !Number.isSafeInteger(policy.version) || policy.version < 1 ||
-    !budget(policy.dailyWelcomeBudgetMinutes) || !budget(policy.lifetimeWelcomeBudgetMinutes) ||
-    policy.dailyWelcomeBudgetMinutes > policy.lifetimeWelcomeBudgetMinutes) throw new ServiceError('invalid_minute_policy');
+    (policy.dailyWelcomeBudgetMinutes!==undefined && !budget(policy.dailyWelcomeBudgetMinutes)) ||
+    (policy.lifetimeWelcomeBudgetMinutes!==undefined && !budget(policy.lifetimeWelcomeBudgetMinutes))) throw new ServiceError('invalid_minute_policy');
   const amount = millisecondsForMinutes(policy.welcomeMinutes);
-  if (policy.welcomeEnabled && (!amount || policy.dailyWelcomeBudgetMinutes < policy.welcomeMinutes))
-    throw new ServiceError('welcome_budget_required');
+  if (policy.welcomeEnabled && !amount) throw new ServiceError('welcome_minutes_required');
   return transaction(db, async sql => {
     await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-welcome-minutes'))");
     const before = policyFromRow((await sql.query('SELECT * FROM minute_policy WHERE singleton FOR UPDATE')).rows[0]);
     if (before.version !== policy.version) throw new ServiceError('policy_changed_review_again', 409);
-    const after = { ...policy, version: policy.version + 1 };
-    await sql.query(`UPDATE minute_policy SET version=$1,welcome_enabled=$2,welcome_ms=$3,
-      daily_welcome_budget_ms=$4,lifetime_welcome_budget_ms=$5 WHERE singleton`,
-    [after.version, after.welcomeEnabled, amount, after.dailyWelcomeBudgetMinutes * MS_PER_MINUTE, after.lifetimeWelcomeBudgetMinutes * MS_PER_MINUTE]);
+    const after = {version:policy.version+1,welcomeEnabled:policy.welcomeEnabled,welcomeMinutes:policy.welcomeMinutes};
+    await sql.query('UPDATE minute_policy SET version=$1,welcome_enabled=$2,welcome_ms=$3 WHERE singleton',
+      [after.version,after.welcomeEnabled,amount]);
     await sql.query('INSERT INTO minute_policy_audit(id,actor,reason,previous_policy,next_policy) VALUES($1,$2,$3,$4,$5)',
       [randomUUID(), actor, reason, JSON.stringify(before), JSON.stringify(after)]);
     return after;
+  });
+}
+
+/** Existing sandbox grants require an explicit reviewed opening balance; no inferred consumption. */
+export async function reconcileSandboxMinutes(db: Database, input: {
+  accountID: string; expectedBalanceMilliseconds: number; sandboxMilliseconds: number; actor: string; reason: string;
+}) {
+  auditText(input.actor); auditText(input.reason);
+  if (!isUUID(input.accountID) || !Number.isSafeInteger(input.expectedBalanceMilliseconds) || input.expectedBalanceMilliseconds<0 ||
+    !Number.isSafeInteger(input.sandboxMilliseconds) || input.sandboxMilliseconds<0 || input.sandboxMilliseconds>input.expectedBalanceMilliseconds)
+    throw new ServiceError('invalid_sandbox_reconciliation');
+  return transaction(db,async sql=>{
+    await sql.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[input.accountID]);
+    const wallet=(await sql.query('SELECT * FROM minute_wallets WHERE account_id=$1 FOR UPDATE',[input.accountID])).rows[0];
+    if (!wallet || wallet.sandbox_reconciled || Number(wallet.balance_ms)!==input.expectedBalanceMilliseconds || Number(wallet.reserved_ms)!==0)
+      throw new ServiceError('sandbox_reconciliation_review_again',409);
+    await sql.query(`INSERT INTO minute_sandbox_reconciliations(id,account_id,actor,reason,balance_ms,reserved_ms,previous_sandbox_ms,next_sandbox_ms)
+      VALUES($1,$2,$3,$4,$5,0,$6,$7)`,[randomUUID(),input.accountID,input.actor,input.reason,wallet.balance_ms,wallet.sandbox_balance_ms,input.sandboxMilliseconds]);
+    await sql.query('UPDATE minute_wallets SET sandbox_balance_ms=$2,sandbox_reconciled=true WHERE account_id=$1',[input.accountID,input.sandboxMilliseconds]);
+    return {accountID:input.accountID,reconciled:true,sandboxMilliseconds:input.sandboxMilliseconds};
   });
 }
 function campaignSummary(row: any) {
@@ -115,13 +134,13 @@ export async function applyMinuteCampaign(db: Database, id: string, confirmation
 // Local operator process only. No administrative HTTP routes or client admin key.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const command = process.argv[2], url = process.env.DATABASE_URL;
-  if (!url || process.argv.length !== 3 || !['policy', 'set-policy', 'funding', 'set-funding', 'prepare-grant', 'apply-grant'].includes(command ?? '')) {
-    console.error('Use minutes-admin policy | set-policy | funding | set-funding | prepare-grant | apply-grant. Mutations read JSON from stdin.'); process.exitCode = 1;
+  if (!url || process.argv.length !== 3 || !['policy', 'set-policy', 'funding', 'set-funding', 'pricing', 'set-pricing', 'prepare-grant', 'apply-grant','reconcile-sandbox'].includes(command ?? '')) {
+    console.error('Use minutes-admin policy | set-policy | funding | set-funding | pricing | set-pricing | prepare-grant | apply-grant | reconcile-sandbox. Mutations read JSON from stdin.'); process.exitCode = 1;
   } else {
     const db = connectDatabase(url);
     try {
       let input: any;
-      if (command !== 'policy' && command !== 'funding') {
+      if (command !== 'policy' && command !== 'funding' && command !== 'pricing') {
         let data = '';
         for await (const chunk of process.stdin) { data += chunk.toString(); if (data.length > 4_000_000) throw new ServiceError('invalid_request'); }
         input = JSON.parse(data);
@@ -131,7 +150,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       else if (command === 'set-policy') result = await updateWelcomePolicy(db, input.policy, input.actor, input.reason);
       else if (command === 'funding') result = await welcomeFunding(db);
       else if (command === 'set-funding') result = await updateWelcomeFunding(db, input.policy, input.actor, input.reason);
+      else if (command === 'pricing') result = await aiPricingPolicy(db);
+      else if (command === 'set-pricing') result = await updateAIPricingPolicy(db, input.policy, input.actor, input.reason);
       else if (command === 'prepare-grant') result = await prepareMinuteCampaign(db, input);
+      else if (command === 'reconcile-sandbox') result=await reconcileSandboxMinutes(db,input);
       else {
         do { result = await applyMinuteCampaign(db, input.campaignID, input.confirmation); }
         while ((result as { pending: number }).pending > 0);

@@ -16,6 +16,7 @@ export interface HostedHelperInput {
 export interface HostedHelperConfig {
   accountAllowlist: ReadonlySet<string>;
   aggregateFundingCapNano: bigint;
+  publicMinuteAccess?: boolean;
   helperBudgetNanoPerMinute: bigint;
   maxRequestsPerMinute: number;
   maxSearchesPerSession: number;
@@ -110,8 +111,9 @@ export async function hostedHelperExposure(sql: Pick<PoolClient, 'query'>): Prom
   return BigInt((await sql.query('SELECT COALESCE(sum(liability_nano),0) AS total FROM hosted_helper_sessions')).rows[0].total);
 }
 function validateConfig(config: HostedHelperConfig): void {
-  if (!config.accountAllowlist.size || [...config.accountAllowlist].some(id => !UUID.test(id)) ||
-    typeof config.aggregateFundingCapNano !== 'bigint' || config.aggregateFundingCapNano <= 0n || config.aggregateFundingCapNano > 100_000_000_000n ||
+  if ((!config.publicMinuteAccess && (!config.accountAllowlist.size || typeof config.aggregateFundingCapNano !== 'bigint' ||
+    config.aggregateFundingCapNano <= 0n || config.aggregateFundingCapNano > 100_000_000_000n)) ||
+    [...config.accountAllowlist].some(id => !UUID.test(id)) ||
     typeof config.helperBudgetNanoPerMinute !== 'bigint' || config.helperBudgetNanoPerMinute <= 0n || config.helperBudgetNanoPerMinute > 1_000_000_000n ||
     !integer(config.maxRequestsPerMinute, 1, 60) || !integer(config.maxSearchesPerSession, 0, 3) ||
     !integer(config.maxConcurrentPerSession, 1, 3) || !integer(config.maxConcurrentGlobal, 1, 20) ||
@@ -127,7 +129,7 @@ export class HostedHelpers {
     validateConfig(config); this.config = Object.freeze({ ...config, accountAllowlist: new Set(config.accountAllowlist) });
   }
   get available(): boolean { return true; }
-  allows(account: string): boolean { return this.config.accountAllowlist.has(account); }
+  allows(account: string): boolean { return this.config.publicMinuteAccess===true || this.config.accountAllowlist.has(account); }
   /** Call inside voice admission's transaction after inserting its minute-funded session, before provider creation. */
   async reserveSessionBudget(sql: PoolClient, account: string, sessionID: string): Promise<void> {
     if (!this.allows(account)) throw new ServiceError('hosted_helpers_not_ready', 503);
@@ -136,13 +138,14 @@ export class HostedHelpers {
       FROM hosted_sessions h JOIN accounts a ON a.id=h.account_id LEFT JOIN minute_reservations r ON r.id=h.minute_reservation_id
       WHERE h.id=$1 AND h.account_id=$2 FOR UPDATE OF h`, [sessionID, account])).rows[0];
     if (!session || session.deleted_at) throw new ServiceError('live_session_not_found', 404);
+    if (this.config.publicMinuteAccess && !session.public_minutes) throw new ServiceError('helper_session_funding_unavailable',409);
     if (!['creating','active'].includes(session.state) || !session.reserved_ms || session.minute_owner !== account ||
       Number(session.minute_amount) !== Number(session.reserved_ms) || session.minute_state !== 'open')
       throw new ServiceError('helper_session_funding_unavailable', 409);
     await this.ensureBudget(sql, session);
   }
   async request(account: string, sessionID: string, body: unknown): Promise<HostedHelperResult> {
-    if (!this.config.accountAllowlist.has(account)) throw new ServiceError('hosted_helpers_not_ready', 503);
+    if (!this.allows(account)) throw new ServiceError('hosted_helpers_not_ready', 503);
     if (!UUID.test(sessionID)) throw invalid();
     const input = parseHostedHelperInput(body), providerBody = hostedHelperBody(input);
     const reservation = await this.reserve(account, sessionID, input, providerBody);
@@ -176,10 +179,11 @@ export class HostedHelpers {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-hosted-funding-cap'))");
       const session = (await sql.query(`SELECT h.*,a.deleted_at,r.account_id AS minute_owner,r.amount_ms AS minute_amount,r.state AS minute_state,
         EXISTS(SELECT 1 FROM minute_purchase_transactions p WHERE p.account_id=h.account_id
-          AND p.recovered_ms<LEAST(p.reversal_target_ms,p.granted_ms)) AS refund_due,now() AS database_now
+          AND (NOT h.public_minutes OR p.environment='live') AND p.recovered_ms<LEAST(p.reversal_target_ms,p.granted_ms)) AS refund_due,now() AS database_now
         FROM hosted_sessions h JOIN accounts a ON a.id=h.account_id LEFT JOIN minute_reservations r ON r.id=h.minute_reservation_id
         WHERE h.id=$1 AND h.account_id=$2 FOR UPDATE OF h`, [sessionID, account])).rows[0];
       if (!session || session.deleted_at) throw new ServiceError('live_session_not_found', 404);
+      if (this.config.publicMinuteAccess && !session.public_minutes) throw new ServiceError('helper_session_funding_unavailable',409);
       if (!session.minute_reservation_id || !session.reserved_ms) throw new ServiceError('helper_minute_session_required', 409);
       if (session.minute_owner !== account || Number(session.minute_amount) !== Number(session.reserved_ms) || session.refund_due ||
         (session.state === 'active' ? session.minute_state !== 'open' : session.minute_state !== 'settled'))
@@ -228,9 +232,11 @@ export class HostedHelpers {
     const postClose = earnedTime && session.state === 'closed'
       ? BigInt(earnedMilliseconds(session)) * this.config.helperBudgetNanoPerMinute / 60_000n : null;
     const liability = postClose ?? amount;
-    const voice = BigInt((await sql.query('SELECT COALESCE(sum(funding_exposure_nano),0) AS total FROM hosted_sessions')).rows[0].total);
-    if (voice + await hostedHelperExposure(sql) + liability > this.config.aggregateFundingCapNano)
-      throw new ServiceError('hosted_funding_cap_reached', 503);
+    if (!this.config.publicMinuteAccess) {
+      const voice = BigInt((await sql.query('SELECT COALESCE(sum(funding_exposure_nano),0) AS total FROM hosted_sessions')).rows[0].total);
+      if (voice + await hostedHelperExposure(sql) + liability > this.config.aggregateFundingCapNano)
+        throw new ServiceError('hosted_funding_cap_reached', 503);
+    }
     return (await sql.query(`INSERT INTO hosted_helper_sessions(session_id,reserved_ms,per_minute_nano,budget_nano,liability_nano,
       request_limit,search_limit,concurrency_limit,post_session_ms,framing_tokens,search_input_tokens,timeout_ms,rate_version,activation_pending,expires_at,
       earned_time,requests_per_minute,post_close_budget_nano)

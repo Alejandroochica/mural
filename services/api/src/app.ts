@@ -5,6 +5,7 @@ import { accountProfile, authenticate, bearerHash, createChallenge, deleteAccoun
 import { ServiceError } from './errors.js';
 import { applyStripeEvent, type SandboxPayments } from './payments.js';
 import { RATE_VERSION } from './pricing.js';
+import { aiPricingPolicy } from './ai-top-up-pricing.js';
 import { trialEligibility, UnconfiguredAttestor, type TrialAttestor } from './trial.js';
 import type { HostedVoice } from './hosted-voice.js';
 import { ACCESS_REQUEST_PATH, trustedClientNetwork, type AccessRequests } from './access-requests.js';
@@ -52,6 +53,15 @@ export function createApp(services: Services) {
     reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
     // Fastify decodes static route names. Security checks must use the matched route too.
     const path = request.routeOptions.url ?? request.url.split('?')[0]!;
+    if (path === '/v1/guest/minutes' && services.guestMinuteAttestor?.requiresTrustedAdmission) {
+      if (!services.accounts) throw new ServiceError('guest_minutes_unavailable', 503);
+      try { await services.accounts.admission.enter('guest', request.headers, request.raw.socket.remoteAddress ?? request.ip); }
+      catch (error) {
+        if (error instanceof ServiceError) { if (error.status === 429) reply.header('Retry-After', '3600'); throw error; }
+        throw new ServiceError('guest_minutes_unavailable', 503);
+      }
+      return;
+    }
     if (accountPaths.has(path)) {
       if (!services.accounts || (!hasGoogleSignIn(services.auth) && !(services.auth.appleClientID && services.appleRevoker))) throw new ServiceError('accounts_unavailable', 503);
       try {
@@ -91,16 +101,22 @@ export function createApp(services: Services) {
     const code = error instanceof ServiceError ? error.code : status < 500 ? 'invalid_request' : 'service_unavailable';
     reply.code(status).send({ error: { code } });
   });
-  app.get('/healthz', async () => ({ ok: true, stage: 'commercial-foundation', hostedVoice: false, livePayments: false }));
+  const featureState=()=>{
+    const hostedVoice=Boolean(services.hosted?.available && (!services.hosted.minuteFunded || services.hostedHelpers));
+    const livePayments=['stripe','play'].some(provider=>services.minuteCommerce?.purchases.products(provider as 'stripe'|'play').some(product=>product.environment==='live'));
+    return {hostedVoice,guestMinutes:Boolean(hostedVoice && services.hosted?.publicMinuteAccess && services.guestMinuteAttestor),livePayments};
+  };
+  app.get('/healthz', async () => ({ ok: true, stage: 'commercial-foundation', ...featureState() }));
   app.get('/readyz', async () => {
-    await db.query('SELECT 1'); return { database: true, hostedVoice: false, livePayments: false };
+    await db.query('SELECT 1'); return { database: true, ...featureState() };
   });
   app.get('/v1/pricing', async () => ({ currency: 'USD', rateVersion: RATE_VERSION, moneyUnit: 'nanoUSD',
-    nanoUSDPerDollar: '1000000000', creditNanoUSD: '10000000', serviceFeePercent: 15,
+    nanoUSDPerDollar: '1000000000', creditNanoUSD: '10000000', serviceFeePercent: (await aiPricingPolicy(db)).serviceFeeBasisPoints / 100,
     voice: { model: 'gpt-live-1', perMinuteNanoUSD: '50000000', billingUnit: 'active-session-seconds' },
     text: { model: 'gpt-5.6-luna', inputPerTokenNanoUSD: '200', cachedInputPerTokenNanoUSD: '20', outputPerTokenNanoUSD: '1200' },
-    searchPerCallNanoUSD: '10000000', paymentFees: 'quoted separately at checkout', hostedVoiceAvailable: false,
-    consumerUnit: 'conversation-minutes', consumerBillingBasis: 'connected-conversation-time', minutePacks: [], minutePurchasesAvailable: false }));
+    searchPerCallNanoUSD: '10000000', paymentFees: 'quoted separately at checkout', hostedVoiceAvailable: featureState().hostedVoice,
+    consumerUnit: 'prepaid-ai-value', consumerBillingBasis: 'actual-ai-usage', freeAllowanceUnit:'conversation-minutes',
+    paidMinuteEstimatesOnly:true,minutePacks: [], minutePurchasesAvailable: false }));
   app.route({ method: ['POST', 'OPTIONS'], url: ACCESS_REQUEST_PATH, bodyLimit: 1024,
     onRequest: async (request, reply) => {
       const access = services.accessRequests;
@@ -162,9 +178,21 @@ export function createApp(services: Services) {
     return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth, services.accounts?.identityVerifier, expectedAccountID);
   });
   app.get('/v1/account', async request => accountProfile(db, request.headers.authorization));
-  app.get('/v1/minutes', async request => minuteBalance(db, await authenticate(db, request.headers.authorization, true)));
-  app.post('/v1/guest/minutes', { bodyLimit: 20_000 }, async request =>
-    startGuestMinutes(db, objectBody(request), services.guestMinuteAttestor ?? new UnconfiguredGuestMinuteAttestor()));
+  app.get('/v1/minutes', async request => minuteBalance(db, await authenticate(db, request.headers.authorization, true),
+    services.hosted?.publicMinuteAccess===true));
+  app.post('/v1/guest/minutes', { bodyLimit: 1024 }, async request => {
+    const proof = objectBody(request);
+    try { return { available: true, ...await startGuestMinutes(db, proof, services.guestMinuteAttestor ?? new UnconfiguredGuestMinuteAttestor()) }; }
+    catch (error) {
+      if (error instanceof ServiceError) {
+        if (['welcome_minutes_unavailable', 'welcome_funding_budget_reached', 'trial_attestation_unavailable'].includes(error.code))
+          return { available: false, reason: 'temporarily_unavailable', remainingMilliseconds: 0 };
+        if (['sign_in_to_continue', 'trial_already_claimed'].includes(error.code))
+          return { available: false, reason: 'sign_in_required', remainingMilliseconds: 0 };
+      }
+      throw error;
+    }
+  });
   app.post('/v1/minutes/link-guest', { bodyLimit: 1024 }, async request => {
     const account = await authenticate(db, request.headers.authorization), body = objectBody(request);
     if (Object.keys(body).some(key => key !== 'guestAccessToken')) throw new ServiceError('invalid_request');
@@ -172,7 +200,12 @@ export function createApp(services: Services) {
   });
   app.post('/v1/minutes/welcome', { bodyLimit: 20_000 }, async request => {
     const account = await authenticate(db, request.headers.authorization);
-    return claimWelcomeMinutes(db, account, objectBody(request), services.minuteAttestor ?? new UnconfiguredMinuteAttestor());
+    try { return { available: true, ...await claimWelcomeMinutes(db, account, objectBody(request), services.minuteAttestor ?? new UnconfiguredMinuteAttestor()) }; }
+    catch (error) {
+      if (error instanceof ServiceError && ['welcome_minutes_unavailable', 'welcome_funding_budget_reached', 'trial_attestation_unavailable'].includes(error.code))
+        return { available: false, reason: 'temporarily_unavailable', grantedMilliseconds: 0 };
+      throw error;
+    }
   });
   app.get('/v1/minutes/products', async request => {
     const provider = (request.query as Record<string, unknown>).provider;

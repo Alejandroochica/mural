@@ -1,12 +1,25 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
-import { appendMinuteEntry, assertWelcomeBudget, lockMinuteWallet } from './minutes.js';
+import { appendMinuteEntry, lockMinuteWallet } from './minutes.js';
 import { reserveWelcomeFunding } from './welcome-funding.js';
 
 export interface GuestMinuteAttestor {
-  // Verify a fresh server challenge bound to guest trial access, app identity and device.
+  readonly requiresTrustedAdmission?: boolean;
+  // Validate the configured guest proof; the capped installation beta proves possession only.
   verify(proof: unknown): Promise<{ deviceReference: string; previouslyClaimed: boolean }>;
+}
+/** Capped beta proof of possession, not hardware attestation. Reinstallation may create another token. */
+export class InstallationGuestMinuteAttestor implements GuestMinuteAttestor {
+  readonly requiresTrustedAdmission = true;
+  async verify(proof: unknown) {
+    if (!proof || typeof proof !== 'object' || Array.isArray(proof) || Object.keys(proof).length !== 1 ||
+      !('installationToken' in proof) || typeof proof.installationToken !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(proof.installationToken) ||
+      Buffer.from(proof.installationToken, 'base64url').toString('base64url') !== proof.installationToken)
+      throw new ServiceError('invalid_trial_proof', 400);
+    return { deviceReference: `install:${hashToken(proof.installationToken)}`, previouslyClaimed: false };
+  }
 }
 export class UnconfiguredGuestMinuteAttestor implements GuestMinuteAttestor {
   async verify(_proof: unknown): Promise<never> { throw new ServiceError('trial_attestation_unavailable', 503); }
@@ -31,7 +44,6 @@ export async function startGuestMinutes(db: Database, proof: unknown, attestor: 
       if (verified.previouslyClaimed) throw new ServiceError('trial_already_claimed', 403);
       const allowance = Number(policy.welcome_ms);
       if (!policy.welcome_enabled || !allowance) throw new ServiceError('welcome_minutes_unavailable', 503);
-      await assertWelcomeBudget(sql, policy, allowance);
       account = randomUUID();
       await sql.query('INSERT INTO accounts(id,is_guest) VALUES($1,true)', [account]);
       await reserveWelcomeFunding(sql, account, allowance);
@@ -60,7 +72,7 @@ export async function linkGuestMinutes(db: Database, member: string, guestToken:
     if (previous) {
       if (previous.member_account_id !== member) throw new ServiceError('guest_already_linked', 403);
       await lockMinuteWallet(sql, member);
-      return { transferredMilliseconds: Number(previous.transferred_ms), alreadyLinked: true };
+      return { transferredMilliseconds: Number(previous.transferred_ms), alreadyLinked: true,outcome:previous.outcome as 'transferred'|'member_trial_already_claimed' };
     }
     const session = (await sql.query(`SELECT s.account_id FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
       WHERE s.token_hash=$1 AND s.expires_at>now() AND s.revoked_at IS NULL AND a.is_guest AND a.deleted_at IS NULL`, [tokenHash])).rows[0];
@@ -69,18 +81,22 @@ export async function linkGuestMinutes(db: Database, member: string, guestToken:
     for (const id of [member, guest].sort()) await lockMinuteWallet(sql, id);
     const target = (await sql.query('SELECT is_guest FROM accounts WHERE id=$1', [member])).rows[0];
     if (target.is_guest) throw new ServiceError('sign_in_required', 401);
-    // Another device's trial cannot refill an account that has already claimed its allowance.
-    if ((await sql.query('SELECT 1 FROM minute_welcome_claims WHERE account_id=$1', [member])).rowCount)
-      throw new ServiceError('trial_already_claimed', 409);
     const balance = await lockMinuteWallet(sql, guest);
     if (balance.reserved) throw new ServiceError('finish_guest_conversation_first', 409);
-    await appendMinuteEntry(sql, guest, `guest-link-out:${guest}`, 'transfer', -balance.balance, 0);
-    await appendMinuteEntry(sql, member, `guest-link-in:${guest}`, 'transfer', balance.balance, 0);
-    await sql.query('UPDATE minute_welcome_claims SET account_id=$2 WHERE account_id=$1', [guest, member]);
-    await sql.query('INSERT INTO minute_guest_links(guest_account_id,member_account_id,guest_token_hash,transferred_ms) VALUES($1,$2,$3,$4)',
-      [guest, member, tokenHash, balance.balance]);
+    // An existing member keeps its own allowance and paid balance. The duplicate guest is retired,
+    // rather than trapping a successful login behind a transfer that can never be permitted.
+    const alreadyClaimed=Boolean((await sql.query('SELECT 1 FROM minute_welcome_claims WHERE account_id=$1', [member])).rowCount);
+    const outcome=alreadyClaimed ? 'member_trial_already_claimed' as const : 'transferred' as const;
+    const transferred=alreadyClaimed ? 0 : balance.balance;
+    await appendMinuteEntry(sql, guest, `guest-link-out:${guest}`, alreadyClaimed ? 'forfeit' : 'transfer', -balance.balance, 0);
+    if (!alreadyClaimed) {
+      await appendMinuteEntry(sql, member, `guest-link-in:${guest}`, 'transfer', balance.balance, 0);
+      await sql.query('UPDATE minute_welcome_claims SET account_id=$2 WHERE account_id=$1', [guest, member]);
+    }
+    await sql.query('INSERT INTO minute_guest_links(guest_account_id,member_account_id,guest_token_hash,transferred_ms,outcome) VALUES($1,$2,$3,$4,$5)',
+      [guest, member, tokenHash, transferred,outcome]);
     await sql.query('UPDATE auth_sessions SET revoked_at=now() WHERE account_id=$1', [guest]);
     await sql.query('UPDATE accounts SET deleted_at=now() WHERE id=$1', [guest]);
-    return { transferredMilliseconds: balance.balance, alreadyLinked: false };
+    return { transferredMilliseconds: transferred, alreadyLinked: false,outcome };
   });
 }

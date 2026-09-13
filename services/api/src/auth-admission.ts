@@ -4,7 +4,7 @@ import { transaction, type Database } from './db.js';
 import { trustedClientNetwork } from './access-requests.js';
 import { ServiceError } from './errors.js';
 
-export type AuthOperation = 'challenge' | 'exchange' | 'account';
+export type AuthOperation = 'challenge' | 'exchange' | 'account' | 'guest';
 export interface AuthAdmissionConfig { hmacKey: string; proxyToken: string; allowLocalLoopback: boolean }
 export function accountAdmissionConfig(env: NodeJS.ProcessEnv): AuthAdmissionConfig | undefined {
   if (env.ACCOUNTS_ENABLED !== 'true') return undefined;
@@ -14,7 +14,8 @@ export function accountAdmissionConfig(env: NodeJS.ProcessEnv): AuthAdmissionCon
   return { hmacKey, proxyToken, allowLocalLoopback: env.ACCOUNTS_ALLOW_LOCAL_LOOPBACK === 'true' };
 }
 const limits: Record<AuthOperation, { network: number; global: number }> = {
-  challenge: { network: 60, global: 2000 }, exchange: { network: 120, global: 4000 }, account: { network: 600, global: 20_000 }
+  challenge: { network: 60, global: 2000 }, exchange: { network: 120, global: 4000 }, account: { network: 600, global: 20_000 },
+  guest: { network: 30, global: 2000 }
 };
 export class AuthAdmission {
   constructor(readonly db: Database, readonly config: AuthAdmissionConfig) {}

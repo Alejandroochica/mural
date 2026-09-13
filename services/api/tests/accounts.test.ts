@@ -183,14 +183,14 @@ integration('concurrent signup for the same subject creates one account and wall
   const attempts = await Promise.allSettled([exchangeIdentity(db!, 'google', token, challenge.challengeID, config, verifier), exchangeIdentity(db!, 'google', token, challenge.challengeID, config, verifier)]);
   assert.equal(attempts.filter(attempt => attempt.status === 'fulfilled').length, 1);
 });
-integration('the active account cap blocks new subjects while existing accounts can still sign in', async () => {
+integration('new and existing subjects can sign in after ten thousand active accounts', async () => {
   const subject = randomUUID(), existing = await session(subject);
   const count = Number((await db!.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL')).rows[0].count);
   const inserted = await db!.query('INSERT INTO accounts(id) SELECT gen_random_uuid() FROM generate_series(1,$1) RETURNING id', [10_000 - count]);
   try {
-    await assert.rejects(session(), { code: 'account_capacity_reached' });
+    assert.notEqual((await session()).accountID, existing.accountID);
     assert.equal((await session(subject)).accountID, existing.accountID);
-    assert.equal(Number((await db!.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL')).rows[0].count), 10_000);
+    assert.equal(Number((await db!.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL')).rows[0].count), 10_001);
   } finally { await db!.query('DELETE FROM accounts WHERE id=ANY($1::uuid[])', [inserted.rows.map(row => row.id)]); }
 });
 integration('revoked sessions cannot authorize a later delete, and a failed Apple revoke leaves the account intact', async () => {

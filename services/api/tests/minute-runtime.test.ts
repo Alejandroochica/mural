@@ -56,6 +56,8 @@ test('restricted runtime can serve signup and minute usage but cannot change ope
       await assert.rejects(runtime.query('UPDATE minute_policy SET welcome_enabled=false'), /permission denied/);
       await assert.rejects(runtime.query('DELETE FROM minute_entries'), /permission denied/);
       await assert.rejects(runtime.query('DELETE FROM welcome_funding_allocations'), /permission denied/);
+      await assert.rejects(runtime.query('UPDATE minute_wallets SET sandbox_reconciled=false'), /permission denied/);
+      await assert.rejects(runtime.query('DELETE FROM minute_sandbox_reconciliations'), /permission denied/);
     } finally {
       await runtime.end(); await owner.query(`DROP SCHEMA ${schema} CASCADE; DROP ROLE ${role}`); await owner.end();
     }

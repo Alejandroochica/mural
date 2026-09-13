@@ -15,10 +15,11 @@ const HOLD = voiceCost(TRIAL_MS);
 const unresolved = "state<>'closed'";
 interface Slot { providerID: string; connection?: Sideband; queue: Promise<void>; pending: number; lastHangup: number }
 export interface HostedConfig {
-  /** An explicit operator allowlist prevents sandbox purchases from funding public voice. */
+  /** Restricted test mode keeps its explicit allowlist and aggregate dollar cap. */
   accountAllowlist: ReadonlySet<string>;
   lifetimeFundingCapNano: bigint;
-  /** Minute mode is still restricted to the explicit test account allowlist. */
+  /** Public admission uses funded minute balances, never sandbox receipts or a lifetime test cap. */
+  publicMinuteAccess?: boolean;
   billingUnit?: 'nanoUSD' | 'milliseconds';
   helpers?: Pick<HostedHelpers, 'reserveSessionBudget'>;
   now?: () => number;
@@ -35,13 +36,15 @@ export class HostedVoice {
   private readonly now: () => number;
   private readonly grace: number;
   constructor(private readonly db: Database, private readonly provider: LiveProvider, private readonly config: HostedConfig) {
-    if (config.lifetimeFundingCapNano < HOLD || config.lifetimeFundingCapNano > 25_000_000_000n || !config.accountAllowlist.size)
+    if (config.publicMinuteAccess ? config.billingUnit!=='milliseconds' :
+      config.lifetimeFundingCapNano < HOLD || config.lifetimeFundingCapNano > 25_000_000_000n || !config.accountAllowlist.size)
       throw new ServiceError('invalid_hosted_funding_configuration', 503);
     this.now = config.now ?? Date.now; this.grace = config.closeGraceMilliseconds ?? 5_000;
   }
   get available() { return this.accepting; }
   get minuteFunded() { return this.config.billingUnit === 'milliseconds'; }
-  allows(account: string) { return this.accepting && this.config.accountAllowlist.has(account); }
+  get publicMinuteAccess() { return this.config.publicMinuteAccess === true; }
+  allows(account: string) { return this.accepting && (this.publicMinuteAccess || this.config.accountAllowlist.has(account)); }
   async start(): Promise<void> {
     if (this.leader) throw new ServiceError('voice_worker_already_started', 503);
     const leader = await this.db.connect();
@@ -73,7 +76,7 @@ export class HostedVoice {
     }
   }
   async create(account: string, key: string, sdp: string, language: string, context?: unknown) {
-    if (!this.accepting || !this.config.accountAllowlist.has(account)) throw new ServiceError('hosted_voice_not_ready', 503);
+    if (!this.allows(account)) throw new ServiceError('hosted_voice_not_ready', 503);
     if (!key || key.length < 8 || key.length > 128 || !supportsLanguage(language) || !sdp.startsWith('v=0') || Buffer.byteLength(sdp) > 65_536)
       throw new ServiceError('invalid_live_offer');
     const teachingContext = parseLiveContext(context);
@@ -83,28 +86,31 @@ export class HostedVoice {
     let deadline = new Date(this.now() + reservedMilliseconds);
     await transaction(this.db, async sql => {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-hosted-funding-cap'))");
-      const wallet = minutes ? await lockMinuteWallet(sql, account) : await lockWallet(sql, account, true);
+      const minuteWallet = minutes ? await lockMinuteWallet(sql, account) : undefined;
+      const wallet = minuteWallet ?? await lockWallet(sql, account, true);
       const previous = (await sql.query('SELECT id FROM hosted_sessions WHERE account_id=$1 AND idempotency_key=$2', [account, key])).rows[0];
       // SDP is not persisted. Retrying an offer never starts a second billed call.
       if (previous) throw new ServiceError('live_request_already_created', 409);
       if ((await sql.query(`SELECT id FROM hosted_sessions WHERE account_id=$1 AND ${unresolved}`, [account])).rowCount)
         throw new ServiceError('live_session_unresolved', 409);
-      if ((await sql.query("SELECT id FROM hosted_sessions WHERE state='incomplete' LIMIT 1")).rowCount)
+      if (!this.publicMinuteAccess && (await sql.query("SELECT id FROM hosted_sessions WHERE state='incomplete' LIMIT 1")).rowCount)
         throw new ServiceError('provider_reconciliation_required', 503);
-      const exposure = BigInt((await sql.query('SELECT COALESCE(sum(funding_exposure_nano),0) AS total FROM hosted_sessions')).rows[0].total) +
+      const exposure = this.publicMinuteAccess ? 0n : BigInt((await sql.query('SELECT COALESCE(sum(funding_exposure_nano),0) AS total FROM hosted_sessions')).rows[0].total) +
         await hostedHelperExposure(sql);
       if (minutes) {
-        reservedMilliseconds = Math.min(TRIAL_MS, Number(wallet.balance) - Number(wallet.reserved));
+        if (this.publicMinuteAccess && !minuteWallet!.sandboxReconciled) throw new ServiceError('minute_balance_reconciliation_required',409);
+        reservedMilliseconds = Math.min(TRIAL_MS, Number(wallet.balance) - Number(wallet.reserved) -
+          (this.publicMinuteAccess ? minuteWallet!.sandbox : 0));
         if (reservedMilliseconds <= 0) throw new ServiceError('insufficient_minutes', 402);
         const funding = voiceCost(Math.max(15_000, reservedMilliseconds));
-        if (exposure + funding > this.config.lifetimeFundingCapNano) throw new ServiceError('hosted_funding_cap_reached', 503);
+        if (!this.publicMinuteAccess && exposure + funding > this.config.lifetimeFundingCapNano) throw new ServiceError('hosted_funding_cap_reached', 503);
         // A bounded provider setup window is separate from the user's remaining conversation time.
         deadline = new Date(this.now() + Math.max(30_000, reservedMilliseconds));
-        await sql.query('INSERT INTO minute_reservations(id,account_id,idempotency_key,amount_ms) VALUES($1,$2,$3,$4)',
-          [reservation, account, `hosted:${key}`, reservedMilliseconds]);
+        await sql.query('INSERT INTO minute_reservations(id,account_id,idempotency_key,amount_ms,public_minutes) VALUES($1,$2,$3,$4,$5)',
+          [reservation, account, `hosted:${key}`, reservedMilliseconds,this.publicMinuteAccess]);
         await appendMinuteEntry(sql, account, `minute-reserve:${reservation}`, 'reserve', 0, reservedMilliseconds);
-        await sql.query(`INSERT INTO hosted_sessions(id,account_id,idempotency_key,minute_reservation_id,reserved_ms,rate_version,state,deadline,funding_exposure_nano,minimum_charge_ms)
-          VALUES($1,$2,$3,$4,$5,$6,'creating',$7,$8,15000)`, [id, account, key, reservation, reservedMilliseconds, RATE_VERSION, deadline, funding.toString()]);
+        await sql.query(`INSERT INTO hosted_sessions(id,account_id,idempotency_key,minute_reservation_id,reserved_ms,rate_version,state,deadline,funding_exposure_nano,minimum_charge_ms,public_minutes)
+          VALUES($1,$2,$3,$4,$5,$6,'creating',$7,$8,15000,$9)`, [id, account, key, reservation, reservedMilliseconds, RATE_VERSION, deadline, funding.toString(),this.publicMinuteAccess]);
         await this.config.helpers?.reserveSessionBudget(sql, account, id);
       } else {
         if (exposure + HOLD > this.config.lifetimeFundingCapNano) throw new ServiceError('hosted_funding_cap_reached', 503);
@@ -208,7 +214,7 @@ export class HostedVoice {
           const maximum = Number(hold.amount_ms), charged = Math.min(maximum, Math.max(Number(row.minimum_charge_ms), meter.milliseconds));
           // New sessions have a disclosed 15-second minimum. Existing session policy is
           // immutable; a final smaller balance is consumed once, and cutoff overrun is ours.
-          await appendMinuteEntry(sql, row.account_id, `minute-finish:${hold.id}`, 'settle', -charged, -maximum);
+          await appendMinuteEntry(sql, row.account_id, `minute-finish:${hold.id}`, 'settle', -charged, -maximum,row.public_minutes ? 'funded' : 'mixed');
           await sql.query("UPDATE minute_reservations SET state='settled',used_ms=$2 WHERE id=$1", [hold.id, charged]);
           await recoverMinutePurchaseShortfalls(sql, row.account_id);
           await sql.query(`UPDATE hosted_sessions SET state='closed',provider_cost_nano=$2,charged_ms=$3,funding_exposure_nano=$2 WHERE id=$1`,
@@ -262,7 +268,7 @@ export class HostedVoice {
       await this.leader.query('SELECT 1');
       const rows = (await this.db.query(`SELECT h.*,w.balance_nano,w.reserved_nano,
         EXISTS(SELECT 1 FROM minute_purchase_transactions p WHERE p.account_id=h.account_id
-          AND p.recovered_ms<LEAST(p.reversal_target_ms,p.granted_ms)) AS minute_refund_due
+          AND (NOT h.public_minutes OR p.environment='live') AND p.recovered_ms<LEAST(p.reversal_target_ms,p.granted_ms)) AS minute_refund_due
         FROM hosted_sessions h LEFT JOIN wallets w ON w.account_id=h.account_id WHERE h.state<>'closed'`)).rows;
       for (const row of rows) {
         if (!row.provider_session_id) {

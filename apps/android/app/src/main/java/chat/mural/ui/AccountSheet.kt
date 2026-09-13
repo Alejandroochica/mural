@@ -32,7 +32,8 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
                  provider: ConversationProvider = ConversationProvider.PERSONAL_KEY,
                  hostedAvailable: Boolean = false, conversationRunning: Boolean = false,
                  onSelectProvider: (ConversationProvider) -> Unit = {},
-                 onBuyMinutes: (() -> Unit)? = null) {
+                 onBuyMinutes: (() -> Unit)? = null,
+                 guestMinutes: Long? = null, memberAlreadyClaimedTrial: Boolean = false) {
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     val uri = LocalUriHandler.current
@@ -68,6 +69,25 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
                         }
                     }
                 }
+                if (memberAlreadyClaimedTrial) Text(stringResource(R.string.guest_member_trial_used),
+                    style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary,
+                    modifier = Modifier.testTag("guest-member-trial-used"))
+                Text(stringResource(R.string.account_local_data), style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
+            } else {
+                if (guestMinutes != null) {
+                    Text(minuteBalanceText(guestMinutes), style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.testTag("guest-account-balance"))
+                    Text(stringResource(R.string.guest_account_detail), color = MuralColors.Secondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+                val enabled = !busy && state.googleAvailable
+                Image(painterResource(R.drawable.google_sign_in), stringResource(R.string.account_google),
+                    Modifier.width(260.dp).height(62.dp).alpha(if (enabled) 1f else .45f)
+                        .clickable(enabled = enabled, role = Role.Button, onClick = onSignIn).testTag("account-google"))
+                if (!busy && !state.googleAvailable) Text(stringResource(R.string.account_not_ready),
+                    style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
+                Text(stringResource(R.string.account_agreement), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+            }
                 if (hostedAvailable || provider == ConversationProvider.HOSTED_MINUTES) {
                     SettingsGroup(title = stringResource(R.string.account_conversation_source),
                         footer = if (provider == ConversationProvider.HOSTED_MINUTES) stringResource(R.string.hosted_minimum_charge_disclosure) else null) {
@@ -80,16 +100,7 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
                             onSelect = { onSelectProvider(ConversationProvider.valueOf(it)) })
                     }
                 }
-                Text(stringResource(R.string.account_local_data), style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
-            } else {
-                val enabled = !busy && state.googleAvailable
-                Image(painterResource(R.drawable.google_sign_in), stringResource(R.string.account_google),
-                    Modifier.width(260.dp).height(62.dp).alpha(if (enabled) 1f else .45f)
-                        .clickable(enabled = enabled, role = Role.Button, onClick = onSignIn).testTag("account-google"))
-                if (!busy && !state.googleAvailable) Text(stringResource(R.string.account_not_ready),
-                    style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
-                Text(stringResource(R.string.account_agreement), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
-            }
+
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = MuralColors.Ink, strokeWidth = 2.dp)
             state.notice?.let { Text(stringResource(it.textResource()), color = MuralColors.Secondary,
                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("account-notice")) }

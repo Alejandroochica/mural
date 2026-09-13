@@ -12,6 +12,7 @@ import { AIReports, aiReportConfig, pruneAIReports } from './feedback.js';
 import { configuredMinuteCommerce } from './minute-commerce-config.js';
 import { HostedHelpers } from './hosted-helpers.js';
 import { OpenAIHostedResponses } from './hosted-responses-transport.js';
+import { InstallationGuestMinuteAttestor } from './guest-minutes.js';
 
 const databaseURL = process.env.DATABASE_URL;
 if (!databaseURL) { console.error('DATABASE_URL is required.'); process.exit(1); }
@@ -31,6 +32,11 @@ try {
     { clientID: appleClient, teamID: appleTeam, keyID: appleKey, privateKeyPEM: await readFile(appleFile, 'utf8') }) : undefined;
   await appleRevoker?.validateConfiguration();
   minuteCommerce = await configuredMinuteCommerce(db, process.env, { onFailure: code => console.error(code) });
+  const accessMode = process.env.HOSTED_VOICE_ACCESS ?? 'restricted-test';
+  if (!['restricted-test','public-minutes'].includes(accessMode)) throw new Error('Invalid hosted access mode.');
+  const publicMinuteAccess = accessMode==='public-minutes';
+  if (process.env.GUEST_MINUTES_ENABLED && !['true','false'].includes(process.env.GUEST_MINUTES_ENABLED))
+    throw new Error('Invalid guest minute gate.');
   if (process.env.HOSTED_HELPERS_EXPERIMENTAL && !['true', 'false'].includes(process.env.HOSTED_HELPERS_EXPERIMENTAL))
     throw new Error('Invalid helper gate.');
   if (process.env.HOSTED_HELPERS_EXPERIMENTAL === 'true' &&
@@ -44,8 +50,8 @@ try {
     const lifetimeFundingCapNano = BigInt(process.env.HOSTED_VOICE_LIFETIME_CAP_NANO ?? '0');
     if (process.env.HOSTED_HELPERS_EXPERIMENTAL === 'true') {
       hostedHelpers = new HostedHelpers(db, new OpenAIHostedResponses(process.env.OPENAI_API_KEY ?? ''), {
-        accountAllowlist: accounts, aggregateFundingCapNano: lifetimeFundingCapNano,
-        helperBudgetNanoPerMinute: BigInt(process.env.HOSTED_HELPER_BUDGET_PER_MINUTE_NANO ?? '0'),
+        accountAllowlist: accounts, aggregateFundingCapNano: lifetimeFundingCapNano,publicMinuteAccess,
+        helperBudgetNanoPerMinute: BigInt(process.env.HOSTED_HELPER_BUDGET_PER_MINUTE_NANO ?? '50000000'),
         maxRequestsPerMinute: Number(process.env.HOSTED_HELPER_REQUESTS_PER_MINUTE ?? '6'),
         maxSearchesPerSession: Number(process.env.HOSTED_HELPER_SEARCHES_PER_SESSION ?? '0'),
         maxConcurrentPerSession: 2, maxConcurrentGlobal: 10, postSessionMilliseconds: 120_000,
@@ -54,13 +60,16 @@ try {
       await hostedHelpers.expireBudgets();
     }
     hosted = new HostedVoice(db, new OpenAILiveProvider(process.env.OPENAI_API_KEY ?? ''),
-      { accountAllowlist: accounts, billingUnit, lifetimeFundingCapNano, helpers: hostedHelpers });
+      { accountAllowlist: accounts, billingUnit, lifetimeFundingCapNano,publicMinuteAccess, helpers: hostedHelpers });
     await hosted.start();
   }
   const accessConfig = accessRequestConfig(process.env);
   const accessRequests = accessConfig ? new AccessRequests(db, accessConfig) : undefined;
   const accountsConfig = accountAdmissionConfig(process.env);
   const accounts = accountsConfig ? { admission: new AuthAdmission(db, accountsConfig) } : undefined;
+  if (process.env.GUEST_MINUTES_ENABLED==='true' && (!accounts || !hosted?.publicMinuteAccess || !hostedHelpers))
+    throw new Error('Guest minutes require public minute voice, teaching and trusted admission.');
+  const guestMinuteAttestor = process.env.GUEST_MINUTES_ENABLED==='true' ? new InstallationGuestMinuteAttestor() : undefined;
   const reportConfig = aiReportConfig(process.env);
   const aiReports = reportConfig ? new AIReports(db, reportConfig) : undefined;
   await pruneAccessRequests(db);
@@ -75,7 +84,7 @@ try {
     !(appleClient && appleRevoker)) throw new Error('No account identity provider configured.');
   const app = createApp({ db, auth: { googleClientID: process.env.GOOGLE_CLIENT_ID, appleClientID: appleClient,
     googleAndroidServerClientID, googleAndroidClientIDs }, payments, appleRevoker, hosted, hostedHelpers,
-    minuteCommerce, accessRequests, accounts, aiReports });
+    minuteCommerce, accessRequests, accounts, aiReports,guestMinuteAttestor });
   const cleanup = setInterval(() => {
     void pruneAuthenticationRecords(db).catch(() => { console.error('Account retention cleanup failed.'); });
     void pruneAccessRequests(db).catch(() => { console.error('Access request retention cleanup failed.'); });
@@ -90,7 +99,7 @@ try {
   process.on('SIGTERM', close); process.on('SIGINT', close);
   await app.listen({ port: Number(process.env.PORT ?? 8080), host: '0.0.0.0' });
   minuteCommerce?.runner.start();
-  console.info('Mural foundation running. Public hosted voice and live payments remain unavailable.');
+  console.info('Mural API is running.');
 } catch {
   console.error('Mural could not start. Check configuration; no secret values are logged.');
   await hosted?.stop(); await minuteCommerce?.runner.stop(); await db.end(); process.exitCode = 1;

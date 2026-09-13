@@ -143,7 +143,7 @@ private fun MinutePackCard(pack: MinutePack, enabled: Boolean, onBuy: () -> Unit
 }
 
 @Composable
-private fun minuteBalanceText(milliseconds: Long): String = when {
+internal fun minuteBalanceText(milliseconds: Long): String = when {
     milliseconds == 0L -> stringResource(R.string.minute_purchases_balance_empty)
     milliseconds < 60_000L -> stringResource(R.string.minute_purchases_balance_small)
     else -> stringResource(R.string.minute_purchases_balance, NumberFormat.getNumberInstance().apply {

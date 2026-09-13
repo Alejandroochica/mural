@@ -24,6 +24,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import chat.mural.core.ArchiveCodec
 import chat.mural.ui.MuralApp
+import chat.mural.ui.MuralStartup
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +103,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            MuralStartup(loading = vm.loadingHistory) {
             MuralApp(
                 vm = vm,
                 microphoneMessage = microphoneMessage,
@@ -125,6 +127,7 @@ class MainActivity : ComponentActivity() {
                 purchases = purchases,
                 onBuyMinutes = { sku -> if (!changingAccount) purchases.launch(this@MainActivity, sku) },
             )
+            }
         }
     }
 
@@ -138,7 +141,7 @@ class MainActivity : ComponentActivity() {
             try {
             // An expired owner must be able to renew its token before its held conversation can settle.
             // AccountController rejects a different Google account before saving its bearer.
-            val pendingOwner = vm.pendingHostedOwnerAccountID
+            val pendingOwner = vm.pendingMemberForSignIn()
             account.refreshAndWait()
             if (pendingOwner == null && !vm.prepareForAccountChange()) return@launch
             account.signIn(expectedAccountID = pendingOwner) { nonce ->
@@ -155,8 +158,11 @@ class MainActivity : ComponentActivity() {
                 catch (_: Exception) { throw AccountFailure.Google }
             }
             if (pendingOwner != null && account.state.value.accountID == pendingOwner) vm.prepareForAccountChange()
+            if (account.state.value.signedIn) { vm.completeGuestSignIn(); account.refreshAndWait() }
             vm.refreshHostedReadiness()
-            } finally { account.endSignInTransition(ticket); synchronizeAccountState() }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { Toast.makeText(this@MainActivity, getString(R.string.guest_retry_detail), Toast.LENGTH_LONG).show() }
+            finally { account.endSignInTransition(ticket); synchronizeAccountState() }
         }
     }
 

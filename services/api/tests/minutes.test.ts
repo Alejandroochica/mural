@@ -54,7 +54,7 @@ integration('welcome policy is disabled until configured, audited and protected 
     const initial = await welcomePolicy(f.db); assert.equal(initial.welcomeEnabled, false);
     const id = await f.account();
     await assert.rejects(claimWelcomeMinutes(f.db, id, {}, proof()), /welcome_minutes_unavailable/);
-    await assert.rejects(f.policy(10, 0), /welcome_budget_required/);
+    await assert.rejects(f.policy(0, 0, 0), /welcome_minutes_required/);
     const policy = await f.policy(5);
     await assert.rejects(updateWelcomePolicy(f.db, { ...policy, version: initial.version }, 'test-operator', 'Stale change'), /policy_changed_review_again/);
     assert.equal((await f.db.query('SELECT count(*) FROM minute_policy_audit')).rows[0].count, '1');
@@ -78,6 +78,8 @@ integration('concurrent welcome claims cannot overrun the budget or grant the sa
   const f = await fixture();
   try {
     await f.policy(10, 10, 10); const ids = [await f.account(), await f.account()];
+    await updateWelcomeFunding(f.db, { ...await welcomeFunding(f.db),dailyBudgetMinor:100,lifetimeBudgetMinor:100 },
+      'test-operator','One dollar claim budget');
     const proofs = [proof(), proof()];
     const results = await Promise.allSettled(ids.map((id, i) => claimWelcomeMinutes(f.db, id, {}, proofs[i]!)));
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
@@ -194,7 +196,9 @@ integration('minute API requires identity, exposes no grant route and leaves pur
     const response = await app.inject({ url: '/v1/minutes', headers: authHeaders });
     assert.equal(response.statusCode, 200); assert.equal(response.json().availableMilliseconds, 1_800_000);
     assert.equal((await app.inject({ method: 'POST', url: '/v1/minutes/grant', payload: { minutes: 1000 }, headers: authHeaders })).statusCode, 404);
-    assert.equal((await app.inject({ method: 'POST', url: '/v1/minutes/welcome', payload: {}, headers: authHeaders })).statusCode, 503);
+    const unavailable = await app.inject({ method: 'POST', url: '/v1/minutes/welcome', payload: {}, headers: authHeaders });
+    assert.equal(unavailable.statusCode, 200);
+    assert.deepEqual(unavailable.json(), { available: false, reason: 'temporarily_unavailable', grantedMilliseconds: 0 });
     assert.equal((await app.inject({ url: '/v1/pricing', headers })).json().minutePurchasesAvailable, false);
   } finally { await app.close(); await f.cleanup(); }
 });

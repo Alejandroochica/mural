@@ -102,19 +102,22 @@ export function refundedMilliseconds(allowanceMilliseconds: number, refundedMino
 
 /** Caller already owns the account/wallet lock. Never take funds away from an in-flight reservation. */
 export async function recoverMinutePurchaseShortfalls(sql: PoolClient, accountID: string): Promise<void> {
-  const purchases = (await sql.query(`SELECT order_id,granted_ms,reversal_target_ms,recovered_ms
+  const purchases = (await sql.query(`SELECT order_id,granted_ms,reversal_target_ms,recovered_ms,environment
     FROM minute_purchase_transactions WHERE account_id=$1 AND recovered_ms<LEAST(reversal_target_ms,granted_ms)
     ORDER BY created_at,order_id FOR UPDATE`, [accountID])).rows;
   let wallet = await lockMinuteWallet(sql, accountID, false);
   for (const purchase of purchases) {
     const recovered = Number(purchase.recovered_ms);
-    const amount = Math.min(Math.min(Number(purchase.granted_ms), Number(purchase.reversal_target_ms)) - recovered,
-      wallet.balance - wallet.reserved);
-    if (!amount) break;
-    await appendMinuteEntry(sql, accountID, `minute-purchase-refund:${purchase.order_id}:${recovered + amount}`, 'forfeit', -amount, 0);
+    // A test refund may recover test minutes only; real refunds never draw on sandbox receipts.
+    const available = purchase.environment==='test' ? Math.min(wallet.sandbox,wallet.balance-wallet.reserved) :
+      Math.max(0,wallet.balance-wallet.reserved-wallet.sandbox);
+    const amount = Math.min(Math.min(Number(purchase.granted_ms), Number(purchase.reversal_target_ms)) - recovered, available);
+    if (!amount) continue;
+    await appendMinuteEntry(sql, accountID, `minute-purchase-refund:${purchase.order_id}:${recovered + amount}`, 'forfeit', -amount, 0,
+      purchase.environment==='test' ? 'sandbox' : 'funded');
     await sql.query('UPDATE minute_purchase_transactions SET recovered_ms=$2,updated_at=now() WHERE order_id=$1',
       [purchase.order_id, recovered + amount]);
-    wallet = { balance: wallet.balance - amount, reserved: wallet.reserved };
+    wallet = await lockMinuteWallet(sql, accountID, false);
   }
 }
 
@@ -225,7 +228,8 @@ export class MinutePurchases {
           evidence.state === 'purchased' || purchase.state === 'purchased' ? 'purchased' : 'pending';
         const granted = Number(purchase.granted_ms), allowance = Number(purchasedOrder.allowance_ms);
         if (state === 'purchased' && !granted) {
-          await appendMinuteEntry(sql, purchasedOrder.account_id, `minute-purchase:${evidence.orderID}`, 'purchase', allowance, 0);
+          await appendMinuteEntry(sql, purchasedOrder.account_id, `minute-purchase:${evidence.orderID}`, 'purchase', allowance, 0,
+            purchasedOrder.environment==='test' ? 'sandbox' : 'funded');
         }
         const refund = Math.max(Number(purchase.refunded_minor), evidence.refundedMinor);
         const target = state === 'voided' ? allowance : refundedMilliseconds(allowance, refund, Number(purchasedOrder.total_minor));

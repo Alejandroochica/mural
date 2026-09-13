@@ -113,15 +113,19 @@ integration('a guest grant cannot be stolen by another member or stacked with a 
     const member = await f.member(), other = await f.member();
     await linkGuestMinutes(f.db, member, guest.accessToken);
     await assert.rejects(linkGuestMinutes(f.db, other, guest.accessToken), /guest_already_linked/);
-    await assert.rejects(linkGuestMinutes(f.db, member, otherGuest.accessToken), /trial_already_claimed/);
+    const duplicate=await linkGuestMinutes(f.db, member, otherGuest.accessToken);
+    assert.deepEqual(duplicate,{transferredMilliseconds:0,alreadyLinked:false,outcome:'member_trial_already_claimed'});
     assert.equal((await minuteBalance(f.db, member)).availableMilliseconds, 600_000);
-    assert.equal((await minuteBalance(f.db, otherGuest.guestID)).availableMilliseconds, 600_000);
+    assert.equal((await f.db.query('SELECT balance_ms FROM minute_wallets WHERE account_id=$1',[otherGuest.guestID])).rows[0].balance_ms,'0');
+    assert.deepEqual(await linkGuestMinutes(f.db,member,otherGuest.accessToken),{...duplicate,alreadyLinked:true});
   } finally { await f.cleanup(); }
 });
 integration('guest and signed-in welcome claims consume the same allocation budget', async () => {
   const f = await fixture();
   try {
     await f.policy(10, 10); const member = await f.member();
+    await updateWelcomeFunding(f.db, { ...await welcomeFunding(f.db),dailyBudgetMinor:100,lifetimeBudgetMinor:100 },
+      'test-operator','Shared dollar claim budget');
     const results = await Promise.allSettled([startGuestMinutes(f.db, {}, attestor()), claimWelcomeMinutes(f.db, member, {}, attestor())]);
     assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
     assert.equal((await f.db.query("SELECT sum(balance_delta_ms) FROM minute_entries WHERE kind='welcome'")).rows[0].sum, '600000');

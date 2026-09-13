@@ -9,11 +9,11 @@ import kotlinx.coroutines.withContext
 internal class ConversationProviderStore(context: Context) {
     private val preferences = context.getSharedPreferences("mural_conversation_providers", Context.MODE_PRIVATE)
     data class Snapshot(val hostedIDs: Set<String>, val pendingOwnerID: String?, val selection: ConversationProvider)
-    suspend fun read() = withContext(Dispatchers.IO) {
+    suspend fun read(defaultSelection: ConversationProvider = ConversationProvider.PERSONAL_KEY) = withContext(Dispatchers.IO) {
         Snapshot(preferences.getStringSet("hosted", emptySet())?.toSet().orEmpty(),
             preferences.getString("pending_owner", null),
             runCatching { ConversationProvider.valueOf(preferences.getString("selection", null).orEmpty()) }
-                .getOrDefault(ConversationProvider.PERSONAL_KEY))
+                .getOrDefault(defaultSelection))
     }
     suspend fun markHosted(localID: String, ownerID: String) = withContext(Dispatchers.IO) {
         val ids = preferences.getStringSet("hosted", emptySet()).orEmpty() + localID
