@@ -163,7 +163,7 @@ export class MinutePurchases {
       const prior = (await sql.query('SELECT * FROM minute_purchase_orders WHERE account_id=$1 AND idempotency_key=$2',
         [accountID, idempotencyKey])).rows[0];
       if (prior) {
-        if (prior.provider !== provider || prior.sku !== sku || prior.environment !== verifier.environment || prior.merchant !== verifier.merchant)
+        if (prior.entitlement_kind !== 'minutes' || prior.provider !== provider || prior.sku !== sku || prior.environment !== verifier.environment || prior.merchant !== verifier.merchant)
           throw new ServiceError('idempotency_conflict', 409);
         return order(prior);
       }
@@ -179,7 +179,7 @@ export class MinutePurchases {
   async status(accountID: string, orderID: string): Promise<MinutePurchaseStatus> {
     if (!uuid.test(accountID) || !uuid.test(orderID)) throw new ServiceError('purchase_not_found', 404);
     const found = (await this.db.query(`SELECT p.* FROM minute_purchase_orders o LEFT JOIN minute_purchase_transactions p ON p.order_id=o.id
-      JOIN accounts a ON a.id=o.account_id WHERE o.id=$1 AND o.account_id=$2 AND a.deleted_at IS NULL`, [orderID, accountID])).rows[0];
+      JOIN accounts a ON a.id=o.account_id WHERE o.id=$1 AND o.account_id=$2 AND o.entitlement_kind='minutes' AND a.deleted_at IS NULL`, [orderID, accountID])).rows[0];
     if (!found) throw new ServiceError('purchase_not_found', 404);
     return status(orderID, found.order_id ? found : undefined);
   }
@@ -189,6 +189,12 @@ export class MinutePurchases {
     let verified: VerifiedMinutePurchase;
     try { verified = await verifier.verify(input); }
     catch { throw new ServiceError('purchase_verification_failed', 502); }
+    return this.applyVerifiedEvidence(provider, verified);
+  }
+  /** Server-internal: only the shared provider verifier/router may call this with verified facts. */
+  async applyVerifiedEvidence(provider: PurchaseProvider, verified: VerifiedMinutePurchase): Promise<MinutePurchaseStatus> {
+    const verifier = this.#verifiers.get(provider);
+    if (!verifier) throw new ServiceError('purchase_verification_unavailable', 503);
     validateEvidence(verified, verifier);
     // Canonical primitives only: no provider body or unrelated fields enter storage or digests.
     const evidence = { provider: verified.provider, environment: verified.environment, merchant: verified.merchant,
@@ -204,9 +210,13 @@ export class MinutePurchases {
       for (const key of locks) await sql.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
       const purchasedOrder = (await sql.query('SELECT * FROM minute_purchase_orders WHERE id=$1', [evidence.orderID])).rows[0];
       if (!purchasedOrder) throw new ServiceError('unmapped_minute_purchase', 409);
+      if (purchasedOrder.entitlement_kind !== 'minutes') throw new ServiceError('purchase_entitlement_mismatch', 409);
       if (purchasedOrder.provider !== provider || purchasedOrder.environment !== evidence.environment || purchasedOrder.merchant !== evidence.merchant ||
         purchasedOrder.provider_product !== evidence.providerProduct || purchasedOrder.currency !== evidence.currency ||
         Number(purchasedOrder.total_minor) !== evidence.totalMinor) throw new ServiceError('minute_purchase_mismatch', 409);
+      if ((await sql.query(`SELECT 1 FROM ai_value_purchase_transactions WHERE provider=$1 AND environment=$2
+        AND merchant=$3 AND transaction_hash=$4`, [provider,evidence.environment,evidence.merchant,evidence.transactionHash])).rowCount)
+        throw new ServiceError('purchase_transaction_conflict',409);
       await lockMinuteWallet(sql, purchasedOrder.account_id, false);
       const duplicate = (await sql.query(`SELECT evidence_hash FROM minute_purchase_events
         WHERE provider=$1 AND environment=$2 AND merchant=$3 AND event_hash=$4`,

@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, readFile, chmod, symlink, link, rm } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import { makeAIValueProduct } from '../src/ai-value-purchases.js';
 import { configuredMinuteCommerce } from '../src/minute-commerce-config.js';
 
 const privateKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
@@ -66,9 +67,17 @@ test('sales require explicit activation and approval of the exact immutable cata
     f.env.MURAL_MINUTE_SALES_ENABLED = 'true';
     await assert.rejects(configuredMinuteCommerce(f.db, f.env), configError);
     await f.approve();
+    await assert.rejects(configuredMinuteCommerce(f.db, f.env), configError);
+    const quote=makeAIValueProduct({provider:'stripe',environment:'test',merchant:'acct_configfixture',sku:'synthetic-ai',providerProduct:'price_configfixture',
+      currency:'usd',currencyExponent:2,aiValueMinor:100,policyVersion:1,serviceFeeBasisPoints:1500,
+      processing:{rateBasisPoints:0,fixedMinor:0,bufferBasisPoints:0},exchangeRate:{numerator:'1',denominator:'1',version:'synthetic-usd'},
+      estimate:{nanoUSDPerMinute:'100000000',rateVersion:'synthetic-estimate'}});
+    const catalog={version:2,products:[quote]};
+    await f.file('CATALOG_FILE',catalog); await f.approve();
     const service = (await configuredMinuteCommerce(f.db, f.env))!;
-    assert.equal(service.salesEnabled, true); assert.deepEqual(service.purchases.products('stripe'), [stripeQuote]); await service.runner.stop();
-    await writeFile(f.env.MURAL_MINUTE_CATALOG_FILE!, JSON.stringify(f.catalog) + '\n');
+    assert.equal(service.salesEnabled, true); assert.deepEqual(service.purchases.products('stripe'), []);
+    assert.deepEqual(service.aiPurchases.products('stripe'),[quote]); await service.runner.stop();
+    await writeFile(f.env.MURAL_MINUTE_CATALOG_FILE!, JSON.stringify(catalog) + '\n');
     await assert.rejects(configuredMinuteCommerce(f.db, f.env), configError);
     await f.approve(); await f.file('CATALOG_FILE', { version: 1, products: [] }); await f.approve();
     await assert.rejects(configuredMinuteCommerce(f.db, f.env), configError);

@@ -81,7 +81,12 @@ fun TalkScreen(
 
     BoxWithConstraints(Modifier.fillMaxSize().testTag("talk-screen")) {
     val scrollPage = LocalDensity.current.fontScale > 1.3f || maxHeight < 480.dp
-    val orbSize = if (scrollPage) 170.dp else minOf(220.dp, maxHeight * .34f)
+    val compact = !scrollPage && maxHeight < 620.dp
+    val orbSize = when {
+        scrollPage -> 170.dp
+        compact -> minOf(150.dp, maxHeight * .24f)
+        else -> 220.dp
+    }
     Column(
         Modifier
             .fillMaxSize()
@@ -92,18 +97,18 @@ fun TalkScreen(
         Surface(color = MuralColors.Butter.copy(alpha = .58f), shape = CircleShape) {
             Text(
                 vm.selectedTheme?.title ?: vm.language.talkTitle,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
                 style = MaterialTheme.typography.labelMedium, color = MuralColors.Secondary,
             )
         }
-        Spacer(if (scrollPage) Modifier.height(24.dp) else Modifier.weight(.7f))
+        Spacer(Modifier.height(if (compact) 8.dp else 24.dp))
         MuralOrb(
             energy = maxOf(vm.outputLevel.toFloat(), vm.inputLevel.toFloat() * .45f),
             listening = vm.state == "active" && vm.isVoiceSession && !vm.isMuted,
             active = vm.state != "closing",
             modifier = Modifier.size(orbSize),
         )
-        Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp), contentAlignment = Alignment.Center) {
             Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession), style = MaterialTheme.typography.bodySmall,
                 color = MuralColors.Secondary, modifier = Modifier.testTag("conversation-status"))
             if (assistantPassage != null && passage?.isNotBlank() == true) {
@@ -114,9 +119,11 @@ fun TalkScreen(
                 }
             }
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(if (compact) 12.dp else 20.dp))
         Column(
-            modifier = (if (scrollPage) Modifier else Modifier.weight(1.3f).verticalScroll(rememberScrollState()))
+            // Captions get all flexible space. Competing weighted gaps previously reduced
+            // a short phone's greeting to half a line even at the standard font size.
+            modifier = (if (scrollPage) Modifier else Modifier.weight(1f).verticalScroll(rememberScrollState()))
                 .fillMaxWidth().testTag("conversation-captions"),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -163,11 +170,11 @@ fun TalkScreen(
                 Text(stringResource(R.string.talk_checking), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
             }
         }
-        Spacer(if (scrollPage) Modifier.height(28.dp) else Modifier.weight(.7f))
+        Spacer(Modifier.height(when { scrollPage -> 28.dp; compact -> 10.dp; else -> 24.dp }))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             RoundAction(MuralSymbol.Captions, stringResource(R.string.talk_meaning_label),
                 selected = vm.archive.preferences.meaningVisible, onClick = vm::toggleMeaning)
-            Spacer(Modifier.width(if (scrollPage) 12.dp else 27.dp))
+            Spacer(Modifier.width(when { scrollPage -> 12.dp; compact -> 20.dp; else -> 27.dp }))
             val micDescription = stringResource(when {
                 vm.state == "active" && !vm.isVoiceSession -> R.string.talk_status_written
                 vm.state != "active" -> R.string.talk_mic_start_desc
@@ -175,7 +182,7 @@ fun TalkScreen(
                 else -> R.string.talk_mic_mute_desc
             })
             val micEnabled = !busy && (vm.state != "active" || vm.isVoiceSession)
-            Box(Modifier.padding(bottom = 19.dp).size(76.dp)
+            Box(Modifier.padding(bottom = if (compact) 15.dp else 19.dp).size(if (compact) 66.dp else 76.dp)
                 .shadow(18.dp, CircleShape, ambientColor = MuralColors.Orange.copy(alpha = .15f), spotColor = MuralColors.Orange.copy(alpha = .25f))
                 .background(Brush.linearGradient(listOf(Color(0xFFFFBA7A), MuralColors.Orange)), CircleShape).clip(CircleShape)
                 .testTag("start-conversation").semantics { contentDescription = micDescription }
@@ -186,7 +193,7 @@ fun TalkScreen(
                 else MuralIcon(if (vm.isMuted && vm.state == "active") MuralSymbol.MicOff else MuralSymbol.Mic,
                     modifier = Modifier.size(30.dp))
             }
-            Spacer(Modifier.width(if (scrollPage) 12.dp else 27.dp))
+            Spacer(Modifier.width(when { scrollPage -> 12.dp; compact -> 20.dp; else -> 27.dp }))
             RoundAction(if (vm.isRunning) MuralSymbol.End else MuralSymbol.Transcript,
                 stringResource(if (vm.isRunning) R.string.talk_end_label else R.string.talk_transcript_label),
                 enabled = vm.session != null, onClick = { if (vm.isRunning) vm.end() else transcript = vm.session })
@@ -217,7 +224,7 @@ fun TalkScreen(
         if (vm.session != null && !vm.isRunning) {
             MuralTextButton(onClick = vm::resetConversation) { Text(stringResource(R.string.talk_new_conversation_button)) }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(if (compact) 8.dp else 16.dp))
     }
     }
 

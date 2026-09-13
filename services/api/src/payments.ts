@@ -115,7 +115,11 @@ export async function applyStripeEvent(db: Database, event: Stripe.Event): Promi
       if (object.payment_status === 'paid') {
         if (!paymentIntent) throw new ServiceError('payment_intent_missing', 409);
         if (order.payment_intent_id && order.payment_intent_id !== paymentIntent) throw new ServiceError('payment_mismatch', 409);
-        await appendEntry(sql, order.account_id, `purchase:${order.id}`, 'purchase', BigInt(order.credit_nano), 0n);
+        const priorGrant=(await sql.query('SELECT sandbox_delta_nano FROM ledger WHERE reference=$1',[`purchase:${order.id}`])).rows[0];
+        // Pre-migration rows retain their original facts and an unverified wallet provenance flag.
+        // New legacy checkouts remain sandbox-only, even if public cash conversations are enabled.
+        await appendEntry(sql, order.account_id, `purchase:${order.id}`, 'purchase', BigInt(order.credit_nano), 0n, null,
+          priorGrant ? BigInt(priorGrant.sandbox_delta_nano) : BigInt(order.credit_nano));
         await sql.query(`UPDATE checkout_orders SET stripe_session_id=$2,payment_intent_id=$3,
           state=CASE WHEN state='created' THEN 'paid' ELSE state END WHERE id=$1`, [order.id, id, paymentIntent]);
       }
@@ -134,7 +138,7 @@ export async function applyStripeEvent(db: Database, event: Stripe.Event): Promi
       const target = disputed || order.state === 'disputed' ? credit : (credit * refunded + total - 1n) / total;
       const reversed = BigInt(order.reversed_nano);
       if (target > reversed) {
-        await appendEntry(sql, order.account_id, `reversal:${order.id}:${target}`, 'reversal', -(target - reversed), 0n);
+        await appendEntry(sql, order.account_id, `reversal:${order.id}:${target}`, 'reversal', -(target - reversed), 0n, null, -(target - reversed));
         await sql.query(`UPDATE checkout_orders SET reversed_nano=$2,refunded_minor=GREATEST(refunded_minor,$3),state=$4 WHERE id=$1`,
           [order.id, target.toString(), refunded.toString(), disputed || order.state === 'disputed' ? 'disputed' : 'refunded']);
       }

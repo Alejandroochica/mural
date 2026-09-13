@@ -1,9 +1,11 @@
 # Android release package
 
-This directory prepares an internal **BYOK preview**. It does not authorize an upload or represent the completed hosted, paid Play release. The English listing copy describes the current voice and learning features and states that an OpenAI API key is required. Change that copy only when the candidate actually offers hosted conversations and minute purchases.
+This directory prepares the **Android guest preview for adults 18+**. Eligible new installations can receive ten free conversation minutes while trial funding is available. Google sign-in and an optional personal OpenAI key are supported; paid checkout remains disabled. These files do not establish Play release approval.
 
 | File | Purpose |
 | --- | --- |
+| [signed-candidate-2026-09-14.md](signed-candidate-2026-09-14.md) | Current signed AAB, certificate, test evidence and remaining release checks |
+| [preview-readiness-2026-09-13.md](preview-readiness-2026-09-13.md) | Earlier debug APK and its verification scope |
 | [candidate-audit-8768c86-2026-09-13.md](candidate-audit-8768c86-2026-09-13.md) | Historical unsigned candidate after the account lifecycle fixes; rebuild after later native changes |
 | [candidate-audit-2026-09-13.md](candidate-audit-2026-09-13.md) | Historical candidate before the account lifecycle fixes |
 | [release-spec.json](release-spec.json) | Candidate identity, version, metadata locale, expected assets and bundled notices |
@@ -11,14 +13,15 @@ This directory prepares an internal **BYOK preview**. It does not authorize an u
 | [declarations.md](declarations.md) | Data flows, permissions, Console declarations and unresolved answers |
 | [build-and-verify.md](build-and-verify.md) | Build and evidence procedure for an approved candidate |
 | [release-gates.md](release-gates.md) | Minimum internal-preview and public-release acceptance checks |
+| [paid-listing-copy.md](paid-listing-copy.md) | Approved pricing wording to use only after actual-cost purchases pass release checks |
 
 The owner-approved permanent package is `chat.mural.android`. Play registration and signing are separate release steps. `versionCode` starts at 1; each later upload must use a higher value. A debug installation is not a Play-signed release.
 
 ## Assets
 
-The 512-pixel Play icon is prepared in `assets/icon.png`. Its encoding was normalized to opaque RGBA without changing any RGB pixel, and its sRGB setting matches the canonical iOS source. The feature graphic and six final screenshot paths remain reserved. [Android design captures](../../verification/android-design/README.md) are review evidence and must not be uploaded as finished store assets. Their 1080 × 2424 dimensions exceed Play's maximum screenshot ratio.
+The 512-pixel Play icon, native feature graphic and six 1080 × 1920 screenshots are prepared. [Asset provenance and refresh instructions](assets/README.md) identify the inspected capture build and synthetic learning fixtures. The screenshots show English controls, Spanish from Spain and English meanings. Compare them with the final uploaded candidate after source changes. The icon's encoding was normalized to opaque RGBA without changing any RGB pixel, and its sRGB setting matches the canonical iOS source.
 
-Capture six actual screens from the final candidate at **1080 × 1920**, with synthetic learning content and no personal account details: greeting, Spanish conversation with meanings, themes, vocabulary, language selection and settings. Replace the settings image with account/minute clarity only after that flow works in the uploaded build. Use a dedicated emulator or isolated capture build; do not change a learner's settings or data to stage a screenshot.
+The six screens cover greeting, a Spanish conversation with meanings, themes, vocabulary, language selection and settings. Payment offers and personal account details are absent. Use the isolated capture workflow to refresh them. The older [design captures](../../verification/android-design/README.md) remain review evidence; their 1080 × 2424 dimensions exceed Play's maximum screenshot ratio.
 
 The store icon must be a 512 × 512, 32-bit sRGB PNG, at most 1024 KB. [Google’s icon specification](https://developer.android.com/distribute/google-play/resources/icon-design-specifications) The feature graphic must be a 1024 × 500, 24-bit PNG without alpha. This repository's validator also requires opaque 24-bit PNG screenshots, between 320 and 3840 pixels on each side, with the longer side no more than twice the shorter. Play accepts JPEG screenshots too; this workflow uses PNG to make review consistent. Keep the Mural artwork intact, with no price, rating or award claims. [Google's asset specification](https://support.google.com/googleplay/android-developer/answer/9866151?hl=en-GB)
 

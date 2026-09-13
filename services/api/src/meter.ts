@@ -8,7 +8,7 @@ export class VoiceMeter {
   finalized = false;
   closeRequested = false;
   constructor(readonly sessionID: string, readonly limitMilliseconds = TRIAL_MS) {
-    if (!Number.isSafeInteger(limitMilliseconds) || limitMilliseconds <= 0 || limitMilliseconds > TRIAL_MS)
+    if (!Number.isSafeInteger(limitMilliseconds) || limitMilliseconds <= 0 || limitMilliseconds > 3_600_000)
       throw new ServiceError('invalid_trial_limit');
   }
   receive(attachedSessionID: string, event: unknown) {

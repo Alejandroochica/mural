@@ -5,7 +5,7 @@ Use this procedure after the release scope, package and upload-key custody are a
 ## 1. Freeze the candidate
 
 1. Set the Android `versionCode` and `versionName`, then update [release-spec.json](release-spec.json) to match. Record the Git commit and all release configuration names; record public client IDs if useful, never secrets.
-2. Confirm whether the candidate is the internal BYOK preview or the hosted minute release. Update listing copy and [declarations](declarations.md) for the features actually enabled. Select final assets from the same candidate.
+2. Confirm whether the candidate is a personal-key preview, a funded guest preview or a paid release. Update listing copy and [declarations](declarations.md) for the features actually enabled. Select final assets from the same candidate.
 3. Run the existing cross-platform, Android, backend and security checks appropriate to the changes. Review failures before producing the candidate. Use the [gates](release-gates.md) to identify the required real-device and live-service evidence.
 
 ## 2. Build the bundle

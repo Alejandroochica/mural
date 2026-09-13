@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 import { createHash, createPrivateKey } from 'node:crypto';
 import type { Database } from './db.js';
 import { ServiceError } from './errors.js';
+import { AIValuePurchases, PurchaseFulfillmentRouter, type AIValueProduct } from './ai-value-purchases.js';
 import { MinutePurchases, type MinuteProduct, type PurchaseEnvironment } from './minute-purchases.js';
 import { MinuteReceiptVault, MinuteDeliveryWorker, type MinuteDeliveryAdapter } from './minute-provider-delivery.js';
 import { StripeMinuteProvider, type StripeMinuteTransport } from './stripe-minute-provider.js';
@@ -55,7 +56,10 @@ async function protectedJSON(path: string | undefined, maximumBytes = 65_536): P
 }
 
 export interface MinuteCommerceServices {
+  /** Historical fixed-minute reconciliation only. New sales are off in this runtime. */
   purchases: MinutePurchases;
+  aiPurchases: AIValuePurchases;
+  fulfillment: PurchaseFulfillmentRouter;
   stripe?: StripeMinuteProvider;
   play?: PlayMinuteProvider;
   vault: MinuteReceiptVault;
@@ -100,12 +104,15 @@ async function configure(db: Database, env: Environment, dependencies: MinuteCom
   }
   const catalogFile = await protectedJSON(env[prefix + 'CATALOG_FILE'], 262_144);
   const catalog = keys(catalogFile.value, ['version','products']);
-  if (catalog.version !== 1 || !Array.isArray(catalog.products) || catalog.products.length > 100 || (salesEnabled && !catalog.products.length)) throw invalid();
+  if (![1,2].includes(catalog.version) || (catalog.version===1 && salesEnabled) || !Array.isArray(catalog.products) || catalog.products.length > 100 || (salesEnabled && !catalog.products.length)) throw invalid();
   const approved = env[prefix + 'CATALOG_APPROVED_SHA256'];
   if (approved !== undefined && (!/^[a-f0-9]{64}$/.test(approved) || approved !== catalogFile.hash)) throw invalid();
   if (salesEnabled && approved !== catalogFile.hash) throw invalid();
-  const products: MinuteProduct[] = catalog.products.map((value: unknown) => keys(value,
-    ['provider','environment','merchant','sku','providerProduct','minutes','currency','totalMinor']) as MinuteProduct);
+  const products: MinuteProduct[] = catalog.version===1 ? catalog.products.map((value: unknown) => keys(value,
+    ['provider','environment','merchant','sku','providerProduct','minutes','currency','totalMinor']) as MinuteProduct) : [];
+  const aiProducts: AIValueProduct[] = catalog.version===2 ? catalog.products.map((value: unknown) => keys(value,
+    ['provider','environment','merchant','sku','providerProduct','currency','totalMinor','entitlementKind','billingBasis',
+      'estimate','aiValueNanoUSD','estimatedMilliseconds','quote']) as unknown as AIValueProduct) : [];
   const receipt = keys((await protectedJSON(env[prefix + 'RECEIPT_KEYS_FILE'])).value, ['activeKeyID','keys']);
   const ring = new Map(Object.entries(object(receipt.keys)).map(([id, key]) => [id, base64Key(key)]));
   const vault = new MinuteReceiptVault(db, receipt.activeKeyID, ring);
@@ -131,10 +138,13 @@ async function configure(db: Database, env: Environment, dependencies: MinuteCom
     play = new PlayMinuteProvider(db, vault, { packageName: permanentAndroidPackage, environment, allowLive,
       bindingKey: base64Key(binding.key), currencyExponents: object(settings.currencyExponents), purchasesEnabled: salesEnabled },
     dependencies.playTransport ?? new GooglePlayHTTPTransport(tokens, dependencies.request));
-    for (const product of products) if (product.provider === 'play' && settings.currencyExponents[product.currency] === undefined) throw invalid();
+    for (const product of [...products,...aiProducts]) if (product.provider === 'play' && (settings.currencyExponents[product.currency] === undefined ||
+      ('quote' in product && product.quote.currencyExponent!==settings.currencyExponents[product.currency]))) throw invalid();
   } else if (env[prefix + 'PLAY_SERVICE_ACCOUNT_FILE'] !== undefined || env[prefix + 'PLAY_BINDING_KEY_FILE'] !== undefined || dependencies.playTransport) throw invalid();
   const adapters: MinuteDeliveryAdapter[] = [stripe, play].filter((item): item is StripeMinuteProvider | PlayMinuteProvider => !!item);
-  const purchases = new MinutePurchases(db, { catalog: products, verifiers: adapters, salesEnabled });
+  const purchases = new MinutePurchases(db, { catalog: products, verifiers: adapters, salesEnabled: false });
+  const aiPurchases = new AIValuePurchases(db, { catalog: aiProducts, verifiers: adapters, salesEnabled });
+  const fulfillment = new PurchaseFulfillmentRouter(db, purchases, aiPurchases, adapters);
   // Removing a historical decryption key or provider would strand settled purchases and refunds.
   const receipts = (await db.query(`SELECT DISTINCT encryption_key_id,provider,environment,merchant FROM minute_provider_receipts
     UNION SELECT NULL AS encryption_key_id,provider,environment,merchant FROM minute_purchase_orders`)).rows;
@@ -142,9 +152,9 @@ async function configure(db: Database, env: Environment, dependencies: MinuteCom
     adapter.provider === row.provider && adapter.environment === row.environment && adapter.merchant === row.merchant)) throw invalid();
   const runnerSettings = manifest.runner === undefined ? {} : keys(manifest.runner,
     ['intervalMilliseconds','deliveryLimit','reconciliationLimit','voidPagesPerRun']);
-  const worker = new MinuteDeliveryWorker(db, purchases, adapters);
+  const worker = new MinuteDeliveryWorker(db, fulfillment, adapters);
   const runner = new MinuteCommerceRunner(vault, worker, play ? new PlayVoidReconciler(db, play) : undefined,
     { ...runnerSettings, onFailure: dependencies.onFailure });
-  return { purchases, ...(stripe ? { stripe } : {}), ...(play ? { play } : {}), vault, worker, runner,
+  return { purchases, aiPurchases, fulfillment, ...(stripe ? { stripe } : {}), ...(play ? { play } : {}), vault, worker, runner,
     environment, salesEnabled, catalogSHA256: catalogFile.hash };
 }

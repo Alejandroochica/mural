@@ -112,7 +112,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         fetch = { owner ->
             val enabled = hostedClient(owner.accountID).available()
             val balance = if (enabled) hostedBalance(owner) else null
-            HostedReadiness(owner.accountID, balance?.availableMilliseconds ?: 0, enabled)
+            HostedReadiness(owner.accountID, balance?.readinessMilliseconds ?: 0, enabled)
         }, changed = { hostedReadiness = it })
     var accountChangeBlocked by mutableStateOf(true); private set
 
@@ -577,14 +577,14 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                     if (selectedAccount.busy || owner.accountID != hostedReadiness.accountID) throw HostedFailure.SignInRequired
                     val hosted = hostedClient(owner.accountID)
                     val balance = hostedBalance(owner)
-                    if (balance.availableMilliseconds <= 0 || !hosted.available()) throw HostedFailure.Unavailable
+                    if (!balance.canStartConversation || !hosted.available()) throw HostedFailure.Unavailable
                     // Commit provider provenance and the unresolved-owner marker before making a paid create.
                     hostedSessionIDs = hostedSessionIDs + id
                     pendingHostedOwnerID = owner.accountID
                     withContext(NonCancellable) { providerStore.markHosted(id, owner.accountID) }
                     object : LiveSessionProvider {
                         override suspend fun createLiveSession(request: LiveSessionRequest): LiveSessionConnection {
-                            val result = hosted.createLiveSession(request)
+                            val result = hosted.createLiveSession(request.copy(requestedMilliseconds = archive.preferences.sessionMinutes * 60_000L))
                             val lease = result.lease as? HostedAPIClient.HostedLease ?: throw HostedFailure.InvalidResponse
                             withContext(NonCancellable + Dispatchers.Main.immediate) {
                                 hostedBindings.bind(id, owner.accountID, binding(lease))

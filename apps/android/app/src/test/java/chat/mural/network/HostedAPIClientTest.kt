@@ -25,6 +25,29 @@ class HostedAPIClientTest {
     @Before fun setup() { server = MockWebServer(); server.start(); api = HostedAPIClient(server.url("/"), { stored }, OkHttpClient(), { now }) }
     @After fun teardown() { server.shutdown() }
 
+    @Test fun paidSessionKeepsTheRequestedDurationAndActualCostBilling() = runBlocking {
+        val metadata = """"fundingMode":"ai-value","billingBasis":"actual-ai-usage","limitMilliseconds":1800000,"reservedNanoUSD":"3005000000","minimumChargeMilliseconds":15000,"billingPolicy":"actual-ai-usage-15s-minimum-v1""""
+        server.enqueue(MockResponse().setBody("""{"sessionID":"$sessionID","providerSessionID":"provider-opaque","sdp":"v=0\r\n","deadline":"2023-11-14T22:43:20Z","experimental":true,$metadata}"""))
+        val connection = api.createLiveSession(create.copy(requestedMilliseconds = 1_800_000))
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals(JsonPrimitive(1_800_000), body["requestedMilliseconds"])
+        val lease = connection.lease as HostedAPIClient.HostedLease
+        assertEquals(1_800_000, lease.reservedMilliseconds)
+        server.enqueue(MockResponse().setBody("""{"sessionID":"$sessionID","state":"closed","deadline":"2023-11-14T22:43:20Z","observedMilliseconds":120000,"chargedNanoUSD":"101240000",$metadata}"""))
+        val result = lease.status()
+        assertNull(result.chargedMilliseconds)
+        assertEquals("101240000", result.chargedNanoUSD)
+        assertEquals("actual-ai-usage", result.billingBasis)
+    }
+
+    @Test fun invalidRequestedDurationDoesNotContactProvider() = runBlocking {
+        for (duration in listOf(0L, 59_999L, 3_600_001L)) {
+            try { api.createLiveSession(create.copy(requestedMilliseconds = duration)); fail("duration accepted") }
+            catch (_: HostedFailure.InvalidRequest) { }
+        }
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun productionOriginCannotBeAmbiguousOrAnOpenAIEndpoint() {
         assertNotNull(HostedConfiguration.parse("https://api.example.test"))
         for (value in listOf("http://api.example.test", "https://user:pass@api.example.test", "https://api.example.test/v1",

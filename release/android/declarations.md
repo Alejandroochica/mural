@@ -1,6 +1,6 @@
 # Android release declarations
 
-Source inventory reviewed on 13 September 2026. This is a preparation record, not a submitted Data safety form. The internal preview uses the learner's own OpenAI key. Google account, hosted member conversation and Play Billing code are present. Availability depends on public build configuration and server capabilities; implementation alone does not establish that those services are enabled. Guest funding, hosted billing and store purchases require the release checks below.
+Source inventory reviewed on 13 September 2026. This is a preparation record, not a submitted Data safety form. The current debug preview offers funded guest conversations, Google sign-in and an optional personal OpenAI key. Paid checkout and AI-output reporting remain disabled. Availability depends on build configuration and server capabilities. The [preview readiness record](preview-readiness-2026-09-13.md) identifies the inspected APK and the limits of its live test.
 
 ## Current data flows
 
@@ -13,6 +13,7 @@ Source inventory reviewed on 13 September 2026. This is a preparation record, no
 | Learning archive | User-selected JSON export/import; can contain transcripts and vocabulary; never contains provider or Mural bearer credentials | `LearningRepository.kt`, `MainActivity.kt` |
 | Google identity, when configured | Provider ID token and nonce sent to Mural for verification. Database stores provider subject, account UUID and nullable verified email; names and avatars are not stored | `network/ManagedAccountClient.kt`, `services/api/src/auth.ts` |
 | Mural session, when configured | Bearer stored encrypted on the device, bound to app and API origin. Server stores a token hash and expiry | `network/AccountSessionStore.kt`, `services/api/src/auth.ts` |
+| Guest trial identity and balance | A separate encrypted installation credential accesses a server guest account. Mural retains trial eligibility, granted and remaining time, funding commitments and transfer records. A daily network HMAC limits claims; it does not reliably identify a physical phone after reinstall | `network/GuestInstallationStore.kt`, `services/api/src/guest-minutes.ts` |
 | Hosted voice and helper requests, when enabled | Voice uses the hosted session lease. Selected teaching context passes transiently through Mural’s helper gateway to OpenAI; instructions, input, output and schemas are not stored by that gateway. Mural retains session ownership, reservation, usage and cost records needed for billing and reconciliation | `services/api/docs/hosted-helpers.md`, `network/HostedAPIClient.kt` |
 | Signup admission records | Server retains bounded counters with a daily network HMAC. This is a pseudonymous abuse-control identifier, not anonymous data | `services/api/docs/accounts-reference.md` |
 | AI-output report, when configured | User reviews and consents to a selected excerpt of at most 2,000 UTF-16 units. Mural stores it with language, reason, consent version and receipt ID; it expires after 30 days. Audio, the rest of the conversation and account credentials are not included | `services/api/docs/ai-reporting.md`, `services/api/src/feedback.ts` |

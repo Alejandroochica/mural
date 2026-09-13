@@ -1,8 +1,8 @@
 # Why paid minutes are estimates
 
-Mural's approved paid model is prepaid AI usage, plus a 15% Mural service fee and separately quoted payment costs and buffer. The app should lead with an estimated conversation duration and make the cost breakdown available before purchase. A fixed promise such as “30 minutes for $5.99” is not the approved offer.
+Mural's approved pricing formula uses exact AI cost, a 15% Mural service fee, and separately quoted payment costs and buffer. Purchased balances fund actual provider charges; the app shows estimated conversation minutes. A purchase does not guarantee a fixed duration. The $5.99 offer was not approved.
 
-Voice has a duration-based cost. Meanings, corrections, assessments and topic searches add usage that varies between conversations. A currency balance allows Mural to charge for actual provider usage while keeping unused value available for later conversations. Purchased value adds to the existing balance; it does not replace remaining free time. Free and gifted minutes remain duration entitlements and are spent before paid value.
+Voice has a duration-based cost. Meanings, corrections, assessments and topic searches add usage that varies between conversations. Under exact-usage pricing, a currency balance allows Mural to charge for actual provider usage while keeping unused value available for later conversations. Purchased value adds to the existing balance; it does not replace remaining free time. Free and gifted minutes remain duration entitlements and are spent before paid value.
 
 ## Fee calculation
 
@@ -14,8 +14,10 @@ The service percentage lives in the database, initially at 1,500 basis points. O
 
 ## Implementation status
 
-The configurable policy, integer quote calculation and estimated-duration calculation are implemented and tested. The public pricing response identifies the actual-usage model and does not advertise fixed minute packs.
+The configurable policy, integer quote calculation and estimated-duration calculation are implemented and tested. The owner confirmed exact AI charges with estimated minutes on September 13, 2026. The public pricing response identifies this model and does not advertise fixed minute packs.
 
-Live exact-cost purchases remain disabled. Connecting verified Stripe and Play fulfillment to the currency wallet, settling both voice and teaching usage, handling paid refunds, and updating Android's purchase and balance screens are still required. Existing fixed-minute purchase tests describe the previous implementation; they do not certify the new paid flow. The sandbox-only Stripe top-up path is also not a production payment service.
+Live exact-cost purchases remain disabled. The new implementation connects verified purchases to AI value, reserves voice and teaching costs separately, settles known provider usage, reverses proportional refunds and shows estimated minutes with itemized fees in Android. The API suite passes 292 tests. A real Stripe sandbox checkout verified a single grant despite repeated delivery, encrypted receipts, partial and full refunds, and exclusion of test funds from public paid availability. These checks do not certify live Stripe or Google Play payments. Channel fees, taxes, launch markets, live configuration and Play purchase verification remain release requirements.
+
+Historical cash wallets require privileged reconciliation before they can accept public paid purchases or conversations. Legacy cash sessions automatically mark their owner's wallet unverified; this cannot be reversed by the API role. Generic direct ledger reserve/settle operations remain private test tools and also require reconciliation before any affected account becomes eligible for public paid use. Do not bulk-approve historical balances.
 
 Free trial funding is independent of payment pricing. The daily and total trial budgets govern new grants across the app. They do not cap signups, revoke existing grants, or set a per-customer spending ceiling.

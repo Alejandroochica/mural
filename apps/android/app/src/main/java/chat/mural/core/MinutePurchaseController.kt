@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 enum class MinutePurchaseNotice { UNAVAILABLE, SIGN_IN_REQUIRED, PRICE_CHANGED, CANCELED, PENDING, VERIFYING, ADDED, REVERSED, VERIFICATION_FAILED }
-data class MinutePack(val sku: String, val minutes: Int, val formattedPrice: String)
+data class MinutePack(val sku: String, val minutes: Int, val formattedPrice: String, val aiValue: AIValueEntitlement? = null)
 data class MinutePurchaseState(val busy: Boolean = false, val available: Boolean = false, val packs: List<MinutePack> = emptyList(),
     val balance: MinuteBalance? = null, val purchaseInProgress: Boolean = false, val notice: MinutePurchaseNotice? = null)
 
@@ -99,7 +99,7 @@ class MinutePurchaseController(
             matches.singleOrNull()?.let { product.sku to (product to it) }
         }.toMap()
         mutable.value = mutable.value.copy(available = products.isNotEmpty(),
-            packs = products.values.map { (product, offer) -> MinutePack(product.sku, product.minutes, offer.formattedPrice) })
+            packs = products.values.map { (product, offer) -> MinutePack(product.sku, product.minutes, offer.formattedPrice, product.aiValue) })
     }
     private suspend fun processEvent(event: MinuteStoreEvent) {
         try {
@@ -142,7 +142,7 @@ class MinutePurchaseController(
     private fun applyStatus(result: MinutePurchaseStatus) {
         mutable.value = mutable.value.copy(purchaseInProgress = result.state in listOf("created", "pending"), notice = when {
             result.state in listOf("created", "pending") -> MinutePurchaseNotice.PENDING
-            result.state == "voided" || result.reversedMilliseconds > 0 || result.reversalOutstandingMilliseconds > 0 -> MinutePurchaseNotice.REVERSED
+            result.state == "voided" || result.reversedMilliseconds > 0 || result.reversalOutstandingMilliseconds > 0 || result.aiValue?.reversed == true -> MinutePurchaseNotice.REVERSED
             result.fulfillmentRecorded -> MinutePurchaseNotice.ADDED
             else -> MinutePurchaseNotice.VERIFICATION_FAILED
         })

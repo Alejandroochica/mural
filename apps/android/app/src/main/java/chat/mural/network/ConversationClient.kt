@@ -18,7 +18,7 @@ interface TeachingClient {
 }
 
 data class LiveSessionRequest(val sdp: String, val instructions: String, val history: JsonArray = JsonArray(emptyList()),
-    val language: String? = null, val requestID: String = UUID.randomUUID().toString()) {
+    val language: String? = null, val requestID: String = UUID.randomUUID().toString(), val requestedMilliseconds: Long? = null) {
     override fun toString() = "LiveSessionRequest([redacted])"
 }
 

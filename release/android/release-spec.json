@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scope": "internal-byok-preview",
+  "scope": "hosted-guest-preview",
   "packageName": "chat.mural.android",
   "versionCode": 1,
   "versionName": "0.1",

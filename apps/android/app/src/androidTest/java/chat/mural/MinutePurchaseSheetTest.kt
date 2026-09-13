@@ -48,6 +48,22 @@ class MinutePurchaseSheetTest {
     private val pack = MinutePack("test-30", 30, "5,99 €")
     private val ready = MinutePurchaseState(available = true, packs = listOf(pack))
 
+    @Test fun purchasedTimeIsEstimatedAndAllFeesAreVisibleBeforeCheckout() {
+        val quote = AIValueQuote("usd", 2, 200, 1500, 30, 39, 2, 271, 1, "synthetic-usd", "synthetic-estimate")
+        val value = AIValueEntitlement("2000000000", 1_200_000, quote)
+        val purchases = mutableListOf<String>()
+        compose.setContent { MuralTheme {
+            MinutePurchaseSheet(ready.copy(packs = listOf(MinutePack("synthetic-value", 20, "$2.71", value))),
+                true, { purchases += it }, {}, {}, {})
+        } }
+        compose.onNodeWithText("About 20 minutes", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        for (label in listOf("For AI usage", "Mural fee (15%)", "Estimated payment fee", "Payment cost buffer")) {
+            compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        }
+        compose.onNodeWithTag("minute-purchase-pack-synthetic-value").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("synthetic-value"), purchases) }
+    }
+
     private fun capture(name: String) {
         val image = compose.onNodeWithTag("minute-purchase-sheet").captureToImage().asAndroidBitmap()
         File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, name).outputStream().use {

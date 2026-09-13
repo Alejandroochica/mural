@@ -15,8 +15,8 @@ function scopeMatches(row: any, scope: PurchaseScope) {
 }
 export async function loadProviderOrder(db: Database, orderID: string, scope: PurchaseScope, accountID?: string): Promise<any> {
   if (!orderIDPattern.test(orderID)) throw new ServiceError('purchase_not_found', 404);
-  const row = (await db.query(`SELECT o.*,a.deleted_at,a.is_guest FROM minute_purchase_orders o
-    JOIN accounts a ON a.id=o.account_id WHERE o.id=$1`, [orderID])).rows[0];
+  const row = (await db.query(`SELECT o.*,a.deleted_at,a.is_guest,q.quote AS ai_value_quote FROM minute_purchase_orders o
+    JOIN accounts a ON a.id=o.account_id LEFT JOIN ai_value_purchase_quotes q ON q.order_id=o.id WHERE o.id=$1`, [orderID])).rows[0];
   if (!row || !scopeMatches(row, scope) || (accountID !== undefined && (row.account_id !== accountID || row.deleted_at || row.is_guest)))
     throw new ServiceError('purchase_not_found', 404);
   return row;
@@ -97,7 +97,9 @@ export interface MinuteDeliveryAdapter extends MinutePurchaseVerifier {
 }
 export class MinuteDeliveryWorker {
   readonly #adapters = new Map<string, MinuteDeliveryAdapter>();
-  constructor(readonly db: Database, readonly purchases: MinutePurchases, adapters: readonly MinuteDeliveryAdapter[]) {
+  constructor(readonly db: Database, readonly purchases: {
+    reconcile(provider: PurchaseScope['provider'], input: unknown): Promise<{ state: string }>
+  }, adapters: readonly MinuteDeliveryAdapter[]) {
     for (const adapter of adapters) this.#adapters.set(`${adapter.provider}:${adapter.environment}:${adapter.merchant}`, adapter);
   }
   /** Durable leases survive process failure; two workers cannot complete each other's work. */

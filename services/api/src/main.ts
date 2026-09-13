@@ -35,6 +35,12 @@ try {
   const accessMode = process.env.HOSTED_VOICE_ACCESS ?? 'restricted-test';
   if (!['restricted-test','public-minutes'].includes(accessMode)) throw new Error('Invalid hosted access mode.');
   const publicMinuteAccess = accessMode==='public-minutes';
+  if (process.env.HOSTED_PAID_VALUE_ENABLED && !['true','false'].includes(process.env.HOSTED_PAID_VALUE_ENABLED))
+    throw new Error('Invalid paid AI value gate.');
+  const publicPaidAccess = process.env.HOSTED_PAID_VALUE_ENABLED === 'true';
+  if (publicPaidAccess && (!publicMinuteAccess || process.env.HOSTED_HELPERS_EXPERIMENTAL !== 'true' ||
+      process.env.HOSTED_VOICE_EXPERIMENTAL !== 'true')) throw new Error('Paid AI value requires public hosted voice and teaching.');
+  if (minuteCommerce?.salesEnabled && !publicPaidAccess) throw new Error('AI value sales require a configured paid conversation service.');
   if (process.env.GUEST_MINUTES_ENABLED && !['true','false'].includes(process.env.GUEST_MINUTES_ENABLED))
     throw new Error('Invalid guest minute gate.');
   if (process.env.HOSTED_HELPERS_EXPERIMENTAL && !['true', 'false'].includes(process.env.HOSTED_HELPERS_EXPERIMENTAL))
@@ -50,7 +56,7 @@ try {
     const lifetimeFundingCapNano = BigInt(process.env.HOSTED_VOICE_LIFETIME_CAP_NANO ?? '0');
     if (process.env.HOSTED_HELPERS_EXPERIMENTAL === 'true') {
       hostedHelpers = new HostedHelpers(db, new OpenAIHostedResponses(process.env.OPENAI_API_KEY ?? ''), {
-        accountAllowlist: accounts, aggregateFundingCapNano: lifetimeFundingCapNano,publicMinuteAccess,
+        accountAllowlist: accounts, aggregateFundingCapNano: lifetimeFundingCapNano,publicMinuteAccess,publicPaidAccess,
         helperBudgetNanoPerMinute: BigInt(process.env.HOSTED_HELPER_BUDGET_PER_MINUTE_NANO ?? '50000000'),
         maxRequestsPerMinute: Number(process.env.HOSTED_HELPER_REQUESTS_PER_MINUTE ?? '6'),
         maxSearchesPerSession: Number(process.env.HOSTED_HELPER_SEARCHES_PER_SESSION ?? '0'),
@@ -60,7 +66,7 @@ try {
       await hostedHelpers.expireBudgets();
     }
     hosted = new HostedVoice(db, new OpenAILiveProvider(process.env.OPENAI_API_KEY ?? ''),
-      { accountAllowlist: accounts, billingUnit, lifetimeFundingCapNano,publicMinuteAccess, helpers: hostedHelpers });
+      { accountAllowlist: accounts, billingUnit, lifetimeFundingCapNano,publicMinuteAccess,publicPaidAccess, helpers: hostedHelpers });
     await hosted.start();
   }
   const accessConfig = accessRequestConfig(process.env);

@@ -50,7 +50,8 @@ export class PlayMinuteProvider implements MinuteDeliveryAdapter {
   async prepare(accountID: string, orderID: string): Promise<{ orderID: string; obfuscatedAccountID: string; obfuscatedProfileID: string }> {
     if (!this.#purchasesEnabled) throw new ServiceError('minute_purchases_unavailable', 503);
     const order = await loadProviderOrder(this.db, orderID, this, accountID);
-    if (this.#exponents[order.currency] === undefined) throw new ServiceError('play_currency_not_configured', 503);
+    if (this.#exponents[order.currency] === undefined || (order.entitlement_kind==='ai_value' && order.ai_value_quote?.currencyExponent!==this.#exponents[order.currency]))
+      throw new ServiceError('play_currency_not_configured', 503);
     const accountHash = this.#binding('account', accountID), orderHash = this.#binding('order', order.id);
     await this.db.query(`INSERT INTO minute_play_order_bindings(order_id,account_hash,order_hash) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [order.id, accountHash, orderHash]);
     const saved = (await this.db.query('SELECT account_hash,order_hash FROM minute_play_order_bindings WHERE order_id=$1', [order.id])).rows[0];
@@ -79,8 +80,8 @@ export class PlayMinuteProvider implements MinuteDeliveryAdapter {
     if (purchaseState !== 'PENDING' && purchase.orderId) {
       if (typeof purchase.orderId !== 'string' || !/^GPA\.[0-9.-]{8,100}$/.test(purchase.orderId)) throw new ServiceError('play_order_not_reconciled', 409);
       const paidOrder = await this.transport.order(this.merchant, purchase.orderId), paidItem = paidOrder?.lineItems?.[0];
-      const exponent = this.#exponents[order.currency];
-      if (exponent === undefined || paidOrder?.orderId !== purchase.orderId || paidOrder.purchaseToken !== token ||
+      const exponent = order.entitlement_kind==='ai_value' ? order.ai_value_quote?.currencyExponent : this.#exponents[order.currency];
+      if (!Number.isInteger(exponent) || exponent<0 || exponent>3 || paidOrder?.orderId !== purchase.orderId || paidOrder.purchaseToken !== token ||
         !Array.isArray(paidOrder.lineItems) || paidOrder.lineItems.length !== 1 || paidItem.productId !== order.provider_product ||
         paidItem.oneTimePurchaseDetails?.quantity !== 1 || paidItem.subscriptionDetails || paidItem.paidAppDetails ||
         paidItem.oneTimePurchaseDetails?.rentalDetails || paidItem.oneTimePurchaseDetails?.preorderDetails ||

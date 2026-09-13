@@ -10,11 +10,12 @@ internal fun validPurchaseToken(value: String) = value.length in 1..4096 && valu
 private const val MAX_MINUTE_MS = 86_400_000L
 
 data class MinuteProduct(val sku: String, val providerProduct: String, val minutes: Int,
-    val currency: String, val totalMinor: Long, val environment: String) {
+    val currency: String, val totalMinor: Long, val environment: String, val aiValue: AIValueEntitlement? = null) {
     init {
         require(sku.length <= 128 && minuteIdentifier.matches(sku) && minuteIdentifier.matches(providerProduct))
-        require(minutes in 1..1440 && Regex("[a-z]{3}").matches(currency) && totalMinor in 1..100_000_000)
+        require(minutes > 0 && (aiValue != null || minutes <= 1440) && Regex("[a-z]{3}").matches(currency) && totalMinor in 1..100_000_000)
         require(environment == "test" || environment == "live")
+        require(aiValue == null || (aiValue.quote.currency == currency && aiValue.quote.totalMinor == totalMinor && aiValue.displayMinutes == minutes))
     }
     fun expectedMicros(): Long? = try {
         val exponent = Currency.getInstance(currency.uppercase(Locale.ROOT)).defaultFractionDigits
@@ -31,21 +32,26 @@ data class PlayOrderBinding(val orderID: String, val obfuscatedAccountID: String
     init { require(minuteUUID.matches(orderID) && Regex("[a-f0-9]{64}").matches(obfuscatedAccountID) && Regex("[a-f0-9]{64}").matches(obfuscatedProfileID)) }
     override fun toString() = "PlayOrderBinding(redacted)"
 }
-data class MinuteOrder(val orderID: String, val minutes: Int, val currency: String, val totalMinor: Long, val payment: PlayOrderBinding) {
+data class MinuteOrder(val orderID: String, val minutes: Int, val currency: String, val totalMinor: Long, val payment: PlayOrderBinding,
+    val aiValue: AIValueEntitlement? = null) {
     init {
-        require(minuteUUID.matches(orderID) && payment.orderID == orderID && minutes in 1..1440)
+        require(minuteUUID.matches(orderID) && payment.orderID == orderID && minutes > 0 && (aiValue != null || minutes <= 1440))
         require(Regex("[a-z]{3}").matches(currency) && totalMinor in 1..100_000_000)
+        require(aiValue == null || (aiValue.quote.currency == currency && aiValue.quote.totalMinor == totalMinor && aiValue.displayMinutes == minutes))
     }
-    fun matches(product: MinuteProduct) = minutes == product.minutes && currency == product.currency && totalMinor == product.totalMinor
+    fun matches(product: MinuteProduct) = minutes == product.minutes && currency == product.currency && totalMinor == product.totalMinor && aiValue == product.aiValue
     override fun toString() = "MinuteOrder(redacted)"
 }
 data class MinutePurchaseStatus(val orderID: String, val state: String, val grantedMilliseconds: Long,
-    val reversedMilliseconds: Long, val reversalOutstandingMilliseconds: Long, val fulfillmentRecorded: Boolean) {
+    val reversedMilliseconds: Long, val reversalOutstandingMilliseconds: Long, val fulfillmentRecorded: Boolean,
+    val aiValue: AIValueFulfillment? = null) {
     init {
         require(minuteUUID.matches(orderID) && state in listOf("created", "pending", "purchased", "voided"))
         require(grantedMilliseconds in 0..MAX_MINUTE_MS && grantedMilliseconds % 60_000L == 0L)
         require(reversedMilliseconds in 0..grantedMilliseconds && reversalOutstandingMilliseconds in 0..(grantedMilliseconds - reversedMilliseconds))
-        require(fulfillmentRecorded == (grantedMilliseconds > 0))
+        require(fulfillmentRecorded == (aiValue?.recorded ?: (grantedMilliseconds > 0)))
+        require(aiValue == null || (grantedMilliseconds == 0L && reversedMilliseconds == 0L && reversalOutstandingMilliseconds == 0L))
+        require(state !in listOf("created", "pending") || !fulfillmentRecorded)
         require(state !in listOf("created", "pending") || grantedMilliseconds == 0L)
     }
 }

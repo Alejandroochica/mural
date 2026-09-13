@@ -61,6 +61,7 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
                                 }.format(if (milliseconds in 1 until 60_000) kotlin.math.ceil(milliseconds / 1000.0) else milliseconds / 60_000.0)),
                             style = MaterialTheme.typography.headlineMedium,
                             modifier = Modifier.testTag("account-minute-balance"))
+                        state.minutes?.let { PaidBalanceText(it) }
                         onBuyMinutes?.let { buy ->
                             Button(onClick = buy, enabled = !busy, modifier = Modifier.fillMaxWidth().testTag("account-buy-minutes"),
                                 colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Ink, contentColor = MuralColors.Cream)) {

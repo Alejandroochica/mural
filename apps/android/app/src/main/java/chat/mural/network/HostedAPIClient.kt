@@ -41,7 +41,8 @@ sealed class HostedFailure : Exception() {
 
 data class HostedSessionStatus(val sessionID: String, val state: String, val deadlineMilliseconds: Long,
     val observedMilliseconds: Long, val reservedMilliseconds: Long, val chargedMilliseconds: Long?,
-    val minimumChargeMilliseconds: Long? = null, val billingPolicy: String? = null) {
+    val minimumChargeMilliseconds: Long? = null, val billingPolicy: String? = null,
+    val billingBasis: String = "connected-conversation-time", val chargedNanoUSD: String? = null) {
     override fun toString() = "HostedSessionStatus([redacted])"
 }
 
@@ -98,6 +99,7 @@ class HostedAPIClient internal constructor(
         val body = buildJsonObject {
             put("sdp", request.sdp); put("language", request.language!!); put("instructions", request.instructions)
             put("history", request.history)
+            request.requestedMilliseconds?.let { put("requestedMilliseconds", it) }
         }
         return request("POST", "sessions", account, body, request.requestID,
             onUndelivered = { it.lease?.let(::closeLater) }) { result ->
@@ -105,12 +107,13 @@ class HostedAPIClient internal constructor(
             val lease = HostedLease(id, account)
             try {
                 val deadline = result.instant("deadline")
-                val reserved = result.count("reservedMilliseconds", 86_400_000)
+                val paid = isPaid(result)
+                val reserved = result.count(if (paid) "limitMilliseconds" else "reservedMilliseconds", 3_600_000)
                 val providerID = result.string("providerSessionID")?.takeIf { it.isNotBlank() && it.length <= 256 && it.none(Char::isISOControl) }
                     ?: throw HostedFailure.InvalidResponse
                 val answer = result.string("sdp")?.takeIf { it.startsWith("v=0") && it.utf8Size() <= 65_536 }
                     ?: throw HostedFailure.InvalidResponse
-                if (result["billingBasis"] != JsonPrimitive(BILLING_BASIS) || result["experimental"] != JsonPrimitive(true) ||
+                if ((!paid && result["billingBasis"] != JsonPrimitive(BILLING_BASIS)) || result["experimental"] != JsonPrimitive(true) ||
                     reserved <= 0 || deadline <= now() || deadline - now() > 86_400_000) throw HostedFailure.InvalidResponse
                 lease.deadlineMilliseconds = deadline
                 lease.reservedMilliseconds = reserved
@@ -235,27 +238,41 @@ class HostedAPIClient internal constructor(
     }
 
     private fun parseStatus(body: JsonObject, id: String): HostedSessionStatus {
-        if (body["sessionID"] != JsonPrimitive(id) || body["billingBasis"] != JsonPrimitive(BILLING_BASIS)) throw HostedFailure.InvalidResponse
+        val paid = isPaid(body)
+        if (body["sessionID"] != JsonPrimitive(id) || (!paid && body["billingBasis"] != JsonPrimitive(BILLING_BASIS))) throw HostedFailure.InvalidResponse
         val state = body.string("state")?.takeIf { it in listOf("creating", "active", "closing", "incomplete", "closed") }
             ?: throw HostedFailure.InvalidResponse
-        val reserved = body.count("reservedMilliseconds", 86_400_000)
-        val charged = if (body["chargedMilliseconds"] == JsonNull) null else body.count("chargedMilliseconds", reserved)
+        val reserved = body.count(if (paid) "limitMilliseconds" else "reservedMilliseconds", 3_600_000)
+        val charged = if (paid || body["chargedMilliseconds"] == JsonNull) null else body.count("chargedMilliseconds", reserved)
         val minimum = billingMinimum(body)
         return HostedSessionStatus(id, state, body.instant("deadline"), body.count("observedMilliseconds"), reserved, charged,
-            minimum.first, minimum.second)
+            minimum.first, minimum.second, if (paid) "actual-ai-usage" else BILLING_BASIS,
+            if (paid && body["chargedNanoUSD"] != JsonNull) body.nano("chargedNanoUSD") else null)
+    }
+
+    private fun isPaid(body: JsonObject): Boolean {
+        if (body["billingBasis"] != JsonPrimitive("actual-ai-usage")) return false
+        if (body["fundingMode"] != JsonPrimitive("ai-value")) throw HostedFailure.InvalidResponse
+        body.nano("reservedNanoUSD")
+        return true
     }
 
     private fun billingMinimum(body: JsonObject): Pair<Long?, String?> {
-        if ("minimumChargeMilliseconds" !in body && "billingPolicy" !in body) return null to null
+        if ("minimumChargeMilliseconds" !in body && "billingPolicy" !in body) {
+            if (isPaid(body)) throw HostedFailure.InvalidResponse
+            return null to null
+        }
         val minimum = body.count("minimumChargeMilliseconds", 15_000)
         val policy = body.string("billingPolicy") ?: throw HostedFailure.InvalidResponse
-        if ((minimum == 0L && policy == "connected-time-only-v1") ||
-            (minimum == 15_000L && policy == "connected-time-15s-minimum-v1")) return minimum to policy
+        if ((minimum == 0L && policy == "connected-time-only-v1" && !isPaid(body)) ||
+            (minimum == 15_000L && policy == "connected-time-15s-minimum-v1" && !isPaid(body)) ||
+            (minimum == 15_000L && policy == "actual-ai-usage-15s-minimum-v1" && isPaid(body))) return minimum to policy
         throw HostedFailure.InvalidResponse
     }
 
     private fun validateCreate(value: LiveSessionRequest) {
-        if (!UUID_PATTERN.matches(value.requestID) || LanguageRegistry.all.none { it.locale == value.language } ||
+        if ((value.requestedMilliseconds != null && value.requestedMilliseconds !in 60_000L..3_600_000L) ||
+            !UUID_PATTERN.matches(value.requestID) || LanguageRegistry.all.none { it.locale == value.language } ||
             !value.sdp.startsWith("v=0") || value.sdp.utf8Size() > 65_536 || !validText(value.instructions, 12_000) ||
             value.history.size > 40 || value.history.toString().utf8Size() > 6_000) throw HostedFailure.InvalidRequest
         for (entry in value.history) {
@@ -285,6 +302,8 @@ class HostedAPIClient internal constructor(
 
 private fun String.utf8Size() = toByteArray(Charsets.UTF_8).size
 private fun JsonObject.string(key: String) = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+private fun JsonObject.nano(key: String): String = string(key)?.takeIf { Regex("0|[1-9][0-9]{0,29}").matches(it) }
+    ?: throw HostedFailure.InvalidResponse
 private fun JsonObject.count(key: String, max: Long = 9_007_199_254_740_991): Long =
     (this[key] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it in 0..max } ?: throw HostedFailure.InvalidResponse
 private fun JsonObject.instant(key: String): Long = try { Instant.parse(string(key)).toEpochMilli().also { if (it < 0) throw HostedFailure.InvalidResponse } }

@@ -8,6 +8,9 @@ import { migrate } from '../src/migrate.js';
 import { authenticate, deleteAccount, digest } from '../src/auth.js';
 import { AuthAdmission } from '../src/auth-admission.js';
 import { finishMinuteReservation, minuteBalance, reserveMinutes } from '../src/minutes.js';
+import { AIValuePurchases, makeAIValueProduct, PurchaseFulfillmentRouter } from '../src/ai-value-purchases.js';
+import { paidAIBalance } from '../src/ledger.js';
+import { updateAIPricingPolicy } from '../src/ai-top-up-pricing.js';
 import { MinutePurchases, type MinuteProduct } from '../src/minute-purchases.js';
 import { MinuteReceiptVault, MinuteDeliveryWorker } from '../src/minute-provider-delivery.js';
 import { StripeMinuteProvider, type StripeMinuteTransport } from '../src/stripe-minute-provider.js';
@@ -22,7 +25,7 @@ const stripeSecret = 'whsec_' + 'syntheticfixture'.repeat(3);
 const stripeKey = 'sk_test_' + 'syntheticfixture'.repeat(3);
 const clone = <T>(value: T): T => structuredClone(value);
 const rootURL = '/v1/minutes/orders';
-async function fixture(options: { enabled?: boolean; salesEnabled?: boolean; hosted?: Services['hosted'] } = {}) {
+async function fixture(options: { enabled?: boolean; salesEnabled?: boolean; aiValue?: boolean; hosted?: Services['hosted'] } = {}) {
   const schema = `commerce_http_${randomUUID().replaceAll('-', '')}`, url = new URL(databaseURL!);
   url.searchParams.set('options', `-c search_path=${schema}`);
   const db = connectDatabase(url.toString()); await db.query(`CREATE SCHEMA ${schema}`); await migrate(db);
@@ -68,9 +71,15 @@ async function fixture(options: { enabled?: boolean; salesEnabled?: boolean; hos
     providerProduct: 'price_httpfixture', minutes: 30, currency: 'usd', totalMinor: 997 },
   { provider: 'play', environment: 'test', merchant: play.merchant, sku: 'fixture-thirty', providerProduct: 'http_thirty', minutes: 30, currency: 'usd', totalMinor: 997 }];
   const purchases = new MinutePurchases(db, { catalog, verifiers: [stripe, play], salesEnabled: options.salesEnabled ?? true });
+  const aiCatalog=catalog.map(p=>makeAIValueProduct({provider:p.provider,environment:p.environment,merchant:p.merchant,
+    sku:'fixture-ai',providerProduct:p.providerProduct,currency:p.currency,currencyExponent:2,aiValueMinor:800,
+    policyVersion:1,serviceFeeBasisPoints:1500,processing:{rateBasisPoints:0,fixedMinor:77,bufferBasisPoints:0},
+    exchangeRate:{numerator:'1',denominator:'1',version:'synthetic-usd'},estimate:{nanoUSDPerMinute:'100000000',rateVersion:'synthetic-estimate'}}));
+  const aiPurchases=options.aiValue?new AIValuePurchases(db,{catalog:aiCatalog,verifiers:[stripe,play],salesEnabled:options.salesEnabled??true}):undefined;
+  const fulfillment=aiPurchases?new PurchaseFulfillmentRouter(db,purchases,aiPurchases,[stripe,play]):undefined;
   const app = createApp({ db, auth: { googleClientID: 'synthetic-google-client' }, accounts: { admission: new AuthAdmission(db, proxy) },
-    ...(options.enabled === false ? {} : { minuteCommerce: { purchases, stripe, play } }), ...(options.hosted ? { hosted: options.hosted } : {}) });
-  return { db, app, purchases, stripe, play, vault, sessions, refunded,
+    ...(options.enabled === false ? {} : { minuteCommerce: { purchases, aiPurchases, fulfillment, stripe, play } }), ...(options.hosted ? { hosted: options.hosted } : {}) });
+  return { db, app, purchases, aiPurchases, fulfillment, stripe, play, vault, sessions, refunded,
     get createCount() { return createCount; },
     async account(guest = false) {
       const id = randomUUID(), token = randomBytes(32).toString('base64url');
@@ -83,7 +92,7 @@ async function fixture(options: { enabled?: boolean; salesEnabled?: boolean; hos
       return { id, token, headers: { ...network, authorization: `Bearer ${token}` } };
     },
     async order(account: { headers: Record<string,string> }, provider: 'stripe' | 'play' = 'stripe', key = randomUUID()) {
-      const response = await app.inject({ method: 'POST', url: rootURL, headers: { ...account.headers, 'idempotency-key': key }, payload: { provider, sku: 'fixture-thirty' } });
+      const response = await app.inject({ method: 'POST', url: rootURL, headers: { ...account.headers, 'idempotency-key': key }, payload: { provider, sku: options.aiValue?'fixture-ai':'fixture-thirty' } });
       assert.equal(response.statusCode, 200, response.body); return response.json();
     },
     stripeEvent(orderID: string, state: 'paid' | 'pending' | 'expired' = 'paid', refund = 0) {
@@ -106,7 +115,7 @@ async function fixture(options: { enabled?: boolean; salesEnabled?: boolean; hos
         productLineItem: [{ productId: 'http_thirty', productOfferDetails: { quantity: 1, refundableQuantity: 1, consumptionState: 'CONSUMPTION_STATE_YET_TO_BE_CONSUMED' } }] };
       return token;
     },
-    async drain() { return new MinuteDeliveryWorker(db, purchases, [stripe,play]).runBatch(); },
+    async drain() { return new MinuteDeliveryWorker(db, fulfillment??purchases, [stripe,play]).runBatch(); },
     async cleanup() { await app.close(); await db.query(`DROP SCHEMA ${schema} CASCADE`); await db.end(); },
   };
 }
@@ -315,4 +324,59 @@ integration('order creation racing deletion cannot produce an unowned payable or
     const rows = (await f.db.query('SELECT o.id,a.deleted_at FROM minute_purchase_orders o JOIN accounts a ON a.id=o.account_id WHERE o.account_id=$1', [account.id])).rows;
     if (rows.length) assert.equal(rows[0].deleted_at, null);
   } finally { await f.cleanup(); }
+});
+
+
+integration('AI-value HTTP catalog, owned quote, signed settlement and refund preserve exact fee snapshot',async()=>{
+  const f=await fixture({aiValue:true});try{
+    const member=await f.account(),other=await f.account();
+    const catalog=(await f.app.inject({url:'/v1/minutes/products?provider=stripe',headers:network})).json();
+    assert.equal(catalog.billingBasis,'actual-ai-usage');assert.equal(catalog.products[0].entitlementKind,'ai_value');
+    assert.equal(catalog.products[0].aiValueNanoUSD,'8000000000');assert.equal(catalog.products[0].estimatedMilliseconds,4_800_000);
+    assert.equal(catalog.products[0].merchant,undefined);assert.equal(catalog.products[0].minutes,undefined);
+    assert.equal(catalog.products[0].quote.serviceFeeMinor,120);assert.equal(catalog.products[0].quote.processingEstimateMinor,77);
+    const key=randomUUID(),order=await f.order(member,'stripe',key);
+    assert.equal(order.aiValueNanoUSD,'8000000000');assert.equal(order.quote.totalMinor,997);
+    assert.equal((await f.app.inject({url:`${rootURL}/${order.orderID}`,headers:other.headers})).statusCode,404);
+    const created=(await f.app.inject({url:`${rootURL}/${order.orderID}`,headers:member.headers})).json();
+    assert.equal(created.state,'created');assert.equal(created.entitlementKind,'ai_value');
+    await updateAIPricingPolicy(f.db,{version:1,serviceFeeBasisPoints:1100},'synthetic operator','verify immutable HTTP quote');
+    const repeated=await f.order(member,'stripe',key);assert.deepEqual(repeated.quote,order.quote);
+    const event=f.stripeEvent(order.orderID);assert.equal((await f.webhook(event)).statusCode,200);assert.equal((await f.webhook(event)).statusCode,200);
+    const paid=(await f.app.inject({url:`${rootURL}/${order.orderID}`,headers:member.headers})).json();
+    assert.equal(paid.grantedNanoUSD,'8000000000');assert.equal(paid.fulfillmentRecorded,true);
+    assert.equal((await paidAIBalance(f.db,member.id)).availableNanoUSD,'0'); // Test receipt cannot pay for public voice.
+    assert.equal((await f.webhook(f.stripeEvent(order.orderID,'paid',997))).statusCode,200);
+    const refunded=(await f.app.inject({url:`${rootURL}/${order.orderID}`,headers:member.headers})).json();
+    assert.equal(refunded.reversedNanoUSD,'8000000000');
+    assert.equal((await f.db.query('SELECT count(*) FROM minute_entries WHERE account_id=$1',[member.id])).rows[0].count,'0');
+  }finally{await f.cleanup();}
+});
+integration('AI-value Play HTTP recovery verifies binding and restores no fixed minutes after reinstall',async()=>{
+  const f=await fixture({aiValue:true});try{
+    const member=await f.account(),other=await f.account(),order=await f.order(member,'play'),token=f.bindPlay(order);
+    const path='/v1/minutes/play/recover';
+    const denied=await f.app.inject({method:'POST',url:path,headers:other.headers,payload:{purchaseToken:token}});
+    assert.notEqual(denied.statusCode,200);
+    for (let count=0;count<2;count++) {
+      const result=await f.app.inject({method:'POST',url:path,headers:member.headers,payload:{purchaseToken:token}});
+      assert.equal(result.statusCode,200,result.body);assert.equal(result.json().orderID,order.orderID);
+      assert.equal(result.json().grantedNanoUSD,'8000000000');assert.equal(result.json().entitlementKind,'ai_value');
+    }
+    assert.equal((await f.db.query('SELECT count(*) FROM ledger WHERE account_id=$1',[member.id])).rows[0].count,'1');
+    await f.drain();assert.equal((await f.db.query('SELECT count(*) FROM minute_entries WHERE account_id=$1',[member.id])).rows[0].count,'0');
+  }finally{await f.cleanup();}
+});
+integration('account deletion blocks pending AI orders and paid balances, but retains resolved refunded orders without identity',async()=>{
+  const f=await fixture({aiValue:true});try{
+    const member=await f.account(),order=await f.order(member);
+    await assert.rejects(deleteAccount(f.db,member.id),{code:'unresolved_billing'});
+    await f.webhook(f.stripeEvent(order.orderID));await assert.rejects(deleteAccount(f.db,member.id),{code:'unresolved_billing'});
+    await f.webhook(f.stripeEvent(order.orderID,'paid',997));
+    const result=await deleteAccount(f.db,member.id);assert.equal(result.retainedFinancialRecords,true);
+    const tombstone=(await f.db.query('SELECT email,deleted_at FROM accounts WHERE id=$1',[member.id])).rows[0];
+    assert.equal(tombstone.email,null);assert.ok(tombstone.deleted_at);
+    assert.equal((await f.db.query('SELECT count(*) FROM identities WHERE account_id=$1',[member.id])).rows[0].count,'0');
+    assert.equal((await f.db.query('SELECT count(*) FROM ai_value_purchase_transactions WHERE account_id=$1',[member.id])).rows[0].count,'1');
+  }finally{await f.cleanup();}
 });

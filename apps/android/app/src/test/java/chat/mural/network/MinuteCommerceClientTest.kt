@@ -24,6 +24,33 @@ class MinuteCommerceClientTest {
     @Before fun setup() { server = MockWebServer(); server.start(); api = MinuteCommerceClient(server.url("/"), OkHttpClient(), now = { 1_000 }) }
     @After fun teardown() { server.shutdown() }
 
+    @Test fun actualValueCatalogOrderAndRefundKeepMoneySeparateFromTime() = runBlocking {
+        val value = """"entitlementKind":"ai_value","billingBasis":"actual-ai-usage","estimate":true,"aiValueNanoUSD":"2000000000","estimatedMilliseconds":1200000,"quote":{"currency":"usd","currencyExponent":2,"aiValueMinor":200,"serviceFeeBasisPoints":1500,"serviceFeeMinor":30,"processingEstimateMinor":39,"processingBufferMinor":2,"totalMinor":271,"policyVersion":1,"exchangeRateVersion":"synthetic-usd","estimateRateVersion":"synthetic-estimate"}"""
+        val product = """{"sku":"synthetic-value","providerProduct":"synthetic_value","currency":"usd","totalMinor":271,"environment":"test",$value}"""
+        server.enqueue(MockResponse().setBody("""{"available":true,"billingBasis":"actual-ai-usage","products":[$product]}"""))
+        val selected = api.catalog().products.single()
+        assertEquals(20, selected.minutes)
+        assertEquals("2000000000", selected.aiValue!!.aiValueNanoUSD)
+        assertEquals(39, selected.aiValue!!.quote.processingEstimateMinor)
+        server.enqueue(MockResponse().setBody("""{"orderID":"$id","currency":"usd","totalMinor":271,"payment":{"orderID":"$id","obfuscatedAccountID":"${"b".repeat(64)}","obfuscatedProfileID":"${"c".repeat(64)}"},$value}"""))
+        assertTrue(api.create(session, selected.sku, "actual-value-order").matches(selected))
+        // A purchased AI balance can cover more than one day; fixed-minute pack caps do not apply.
+        val largerValue = value.replace("\"estimatedMilliseconds\":1200000", "\"estimatedMilliseconds\":120000000")
+        val largerProduct = product.replace("\"estimatedMilliseconds\":1200000", "\"estimatedMilliseconds\":120000000")
+        server.enqueue(MockResponse().setBody("""{"available":true,"billingBasis":"actual-ai-usage","products":[$largerProduct]}"""))
+        val larger = api.catalog().products.single()
+        assertEquals(2000, larger.minutes)
+        server.enqueue(MockResponse().setBody("""{"orderID":"$id","currency":"usd","totalMinor":271,"payment":{"orderID":"$id","obfuscatedAccountID":"${"b".repeat(64)}","obfuscatedProfileID":"${"c".repeat(64)}"},$largerValue}"""))
+        assertTrue(api.create(session, larger.sku, "larger-value-order").matches(larger))
+        server.enqueue(MockResponse().setBody("""{"orderID":"$id","state":"purchased","entitlementKind":"ai_value","grantedNanoUSD":"2000000000","reversedNanoUSD":"1000000000","reversalOutstandingNanoUSD":"0","fulfillmentRecorded":true}"""))
+        val refunded = api.status(session, id)
+        assertTrue(refunded.aiValue!!.reversed)
+        assertEquals(0, refunded.grantedMilliseconds)
+        assertTrue(refunded.fulfillmentRecorded)
+        server.enqueue(MockResponse().setBody("""{"available":true,"billingBasis":"actual-ai-usage","products":[${product.replace("\"serviceFeeMinor\":30", "\"serviceFeeMinor\":0")}]}"""))
+        try { api.catalog(); fail("dishonest fee breakdown accepted") } catch (_: MinuteCommerceFailure.InvalidResponse) { }
+    }
+
     @Test fun configurationRejectsUnsafeOrAmbiguousOrigins() {
         assertNotNull(MinuteCommerceConfiguration.parse("https://api.mural.chat"))
         for (origin in listOf("http://api.example.test", "https://user@api.example.test", "https://api.example.test/v1/",

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -93,19 +95,34 @@ fun OnboardingScreen(
             }
             AnimatedContent(targetState = step, transitionSpec = { fadeIn(tween(350)) togetherWith fadeOut(tween(200)) },
                 modifier = Modifier.weight(1f), label = "onboarding step") { current ->
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 24.dp),
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                val compact = maxHeight < 620.dp
+                val orbSize = when {
+                    !compact -> if (current == 0) 142.dp else 104.dp
+                    current == 0 -> minOf(112.dp, maxHeight * .20f)
+                    else -> minOf(64.dp, maxHeight * .14f)
+                }
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 28.dp, vertical = if (compact) 12.dp else 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    Spacer(Modifier.height(if (current == 0) 20.dp else 4.dp))
-                    MuralOrb(modifier = Modifier.size(if (current == 0) 142.dp else 104.dp))
+                    Spacer(Modifier.height(if (compact) 4.dp else if (current == 0) 20.dp else 4.dp))
+                    MuralOrb(modifier = Modifier.size(orbSize))
                     AnimatedContent(greeting, transitionSpec = { fadeIn(tween(600)) togetherWith fadeOut(tween(350)) },
-                        label = "hello", modifier = Modifier.height(if (current == 0) 82.dp else 70.dp)) { hello ->
-                        Text(hello, style = if (current == 0) MaterialTheme.typography.displayLarge else MaterialTheme.typography.displayMedium,
+                        label = "hello", modifier = Modifier.heightIn(min = when {
+                            compact -> if (current == 0) 64.dp else 48.dp
+                            else -> if (current == 0) 82.dp else 70.dp
+                        })) { hello ->
+                        Text(hello, style = when {
+                            compact -> if (current == 0) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displaySmall
+                            else -> if (current == 0) MaterialTheme.typography.displayLarge else MaterialTheme.typography.displayMedium
+                        },
                             modifier = Modifier.testTag("onboarding-greeting"), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
-                    Spacer(Modifier.height(30.dp))
-                    if (current == 0) LanguageStep(languageId) { languageId = it }
-                    else MeaningStep(language, meaningLanguage) { meaningLanguage = it }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(if (compact) 12.dp else 30.dp))
+                    if (current == 0) LanguageStep(languageId, compact) { languageId = it }
+                    else MeaningStep(language, meaningLanguage, compact) { meaningLanguage = it }
+                    Spacer(Modifier.height(if (compact) 8.dp else 16.dp))
+                }
                 }
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = 26.dp).padding(top = 14.dp, bottom = 16.dp),
@@ -128,9 +145,9 @@ fun OnboardingScreen(
 }
 
 @Composable
-private fun LanguageStep(selected: String, onSelect: (String) -> Unit) {
+private fun LanguageStep(selected: String, compact: Boolean, onSelect: (String) -> Unit) {
     val language = LanguageRegistry.get(selected) ?: LanguageRegistry.all.first()
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 24.dp)) {
         Text(stringResource(R.string.onboarding_language_title), style = MaterialTheme.typography.headlineSmall,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.semantics { heading() }.testTag("onboarding-language-title"))
@@ -149,8 +166,8 @@ private fun LanguageStep(selected: String, onSelect: (String) -> Unit) {
 }
 
 @Composable
-private fun MeaningStep(language: LanguageModule, selected: String, onSelect: (String) -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
+private fun MeaningStep(language: LanguageModule, selected: String, compact: Boolean, onSelect: (String) -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 20.dp)) {
         Text(stringResource(R.string.onboarding_meaning_title), style = MaterialTheme.typography.headlineSmall,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.semantics { heading() }.testTag("onboarding-meaning-title"))
@@ -163,7 +180,13 @@ private fun MeaningStep(language: LanguageModule, selected: String, onSelect: (S
                     trailingIcon = if (selected == name) ({ MuralIcon(MuralSymbol.Check, color = MuralColors.Secondary) }) else null)
             }
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp),
+        if (compact && LocalDensity.current.fontScale <= 1.3f) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(language.greeting, style = MaterialTheme.typography.titleMedium)
+                Text(MeaningLanguages.greeting(selected), style = MaterialTheme.typography.bodyMedium,
+                    color = MuralColors.Secondary, modifier = Modifier.testTag("onboarding-meaning-example"))
+            }
+        } else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp),
             modifier = Modifier.padding(top = 4.dp)) {
             Text(language.greeting, style = MaterialTheme.typography.titleLarge)
             Text(MeaningLanguages.greeting(selected), style = MaterialTheme.typography.bodyLarge,

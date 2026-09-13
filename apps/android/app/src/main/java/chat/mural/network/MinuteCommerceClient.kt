@@ -36,13 +36,15 @@ class MinuteCommerceClient internal constructor(private val origin: HttpUrl, tra
 
     override suspend fun catalog(): MinuteCatalog = decoded {
         val body = request("GET", "minutes/products", providerQuery = true)
-        if (body.text("billingBasis") != "connected-conversation-time") throw MinuteCommerceFailure.InvalidResponse
+        val basis = body.text("billingBasis")
+        if (basis !in listOf("connected-conversation-time", "actual-ai-usage")) throw MinuteCommerceFailure.InvalidResponse
         val products = body["products"] as? JsonArray ?: throw MinuteCommerceFailure.InvalidResponse
         if (products.size > 100) throw MinuteCommerceFailure.InvalidResponse
         MinuteCatalog(body.boolean("available"), products.map { value ->
             val item = value as? JsonObject ?: throw MinuteCommerceFailure.InvalidResponse
-            MinuteProduct(item.text("sku"), item.text("providerProduct"), item.count("minutes", 1440).toInt(), item.text("currency"),
-                item.count("totalMinor", 100_000_000), item.text("environment"))
+            val ai = if (basis == "actual-ai-usage") parseAIValue(item) else null
+            MinuteProduct(item.text("sku"), item.text("providerProduct"), ai?.displayMinutes ?: item.count("minutes", 1440).toInt(), item.text("currency"),
+                item.count("totalMinor", 100_000_000), item.text("environment"), ai)
         })
     }
     override suspend fun create(session: AccountSession, sku: String, idempotencyKey: String): MinuteOrder = decoded {
@@ -50,8 +52,9 @@ class MinuteCommerceClient internal constructor(private val origin: HttpUrl, tra
             throw MinuteCommerceFailure.InvalidResponse
         val body = request("POST", "minutes/orders", session, buildJsonObject { put("provider", "play"); put("sku", sku) }, idempotencyKey)
         val payment = body["payment"] as? JsonObject ?: throw MinuteCommerceFailure.InvalidResponse
-        MinuteOrder(body.text("orderID"), body.count("minutes", 1440).toInt(), body.text("currency"), body.count("totalMinor", 100_000_000),
-            PlayOrderBinding(payment.text("orderID"), payment.text("obfuscatedAccountID"), payment.text("obfuscatedProfileID")))
+        val ai = if (body["entitlementKind"] == JsonPrimitive("ai_value")) parseAIValue(body) else null
+        MinuteOrder(body.text("orderID"), ai?.displayMinutes ?: body.count("minutes", 1440).toInt(), body.text("currency"), body.count("totalMinor", 100_000_000),
+            PlayOrderBinding(payment.text("orderID"), payment.text("obfuscatedAccountID"), payment.text("obfuscatedProfileID")), ai)
     }
     override suspend fun status(session: AccountSession, orderID: String): MinutePurchaseStatus = decoded {
         validateID(orderID); parseStatus(request("GET", "minutes/orders/$orderID", session)).also {
@@ -70,12 +73,24 @@ class MinuteCommerceClient internal constructor(private val origin: HttpUrl, tra
     }
     override suspend fun balance(session: AccountSession): MinuteBalance = decoded {
         val body = request("GET", "minutes", session)
-        MinuteBalance(body.text("unit"), body.text("billingBasis"), body.count("balanceMilliseconds"),
-            body.count("reservedMilliseconds"), body.count("availableMilliseconds"))
+        json.decodeFromJsonElement<MinuteBalance>(body)
     }
-    private fun parseStatus(body: JsonObject) = MinutePurchaseStatus(body.text("orderID"), body.text("state"),
-        body.count("grantedMilliseconds", 86_400_000), body.count("reversedMilliseconds", 86_400_000),
-        body.count("reversalOutstandingMilliseconds", 86_400_000), body.boolean("fulfillmentRecorded"))
+    private fun parseStatus(body: JsonObject): MinutePurchaseStatus {
+        val ai = if (body["entitlementKind"] == JsonPrimitive("ai_value")) AIValueFulfillment(body.text("grantedNanoUSD"),
+            body.text("reversedNanoUSD"), body.text("reversalOutstandingNanoUSD")) else null
+        return MinutePurchaseStatus(body.text("orderID"), body.text("state"),
+            if (ai == null) body.count("grantedMilliseconds", 86_400_000) else 0,
+            if (ai == null) body.count("reversedMilliseconds", 86_400_000) else 0,
+            if (ai == null) body.count("reversalOutstandingMilliseconds", 86_400_000) else 0,
+            body.boolean("fulfillmentRecorded"), ai)
+    }
+    private fun parseAIValue(body: JsonObject): AIValueEntitlement {
+        if (body.text("entitlementKind") != "ai_value" || body.text("billingBasis") != "actual-ai-usage" ||
+            !body.boolean("estimate")) throw MinuteCommerceFailure.InvalidResponse
+        val quote = body["quote"] as? JsonObject ?: throw MinuteCommerceFailure.InvalidResponse
+        return AIValueEntitlement(body.text("aiValueNanoUSD"), body.count("estimatedMilliseconds", MAX_AI_ESTIMATE_MS),
+            json.decodeFromJsonElement<AIValueQuote>(quote))
+    }
     private fun validateID(value: String) { if (!minuteUUID.matches(value)) throw MinuteCommerceFailure.InvalidResponse }
     private fun validateToken(value: String) { if (!validPurchaseToken(value)) throw MinuteCommerceFailure.InvalidResponse }
     private suspend fun <T> decoded(block: suspend () -> T): T = try { block() }

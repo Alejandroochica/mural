@@ -2,6 +2,8 @@ import type { PoolClient } from 'pg';
 import { transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
 import { RATE_VERSION } from './pricing.js';
+import { randomUUID } from 'node:crypto';
+import { appendEntry, lockPaidWallet, lockWallet, reservePaidInTransaction, settlePaidInTransaction } from './ledger.js';
 
 export const HOSTED_HELPER_MODEL = 'gpt-5.6-luna';
 export const HOSTED_HELPER_RATE_VERSION = `${RATE_VERSION}-helper-cache-write-long-context-v1`;
@@ -17,6 +19,7 @@ export interface HostedHelperConfig {
   accountAllowlist: ReadonlySet<string>;
   aggregateFundingCapNano: bigint;
   publicMinuteAccess?: boolean;
+  publicPaidAccess?: boolean;
   helperBudgetNanoPerMinute: bigint;
   maxRequestsPerMinute: number;
   maxSearchesPerSession: number;
@@ -111,7 +114,7 @@ export async function hostedHelperExposure(sql: Pick<PoolClient, 'query'>): Prom
   return BigInt((await sql.query('SELECT COALESCE(sum(liability_nano),0) AS total FROM hosted_helper_sessions')).rows[0].total);
 }
 function validateConfig(config: HostedHelperConfig): void {
-  if ((!config.publicMinuteAccess && (!config.accountAllowlist.size || typeof config.aggregateFundingCapNano !== 'bigint' ||
+  if ((config.publicPaidAccess && !config.publicMinuteAccess) || (!config.publicMinuteAccess && (!config.accountAllowlist.size || typeof config.aggregateFundingCapNano !== 'bigint' ||
     config.aggregateFundingCapNano <= 0n || config.aggregateFundingCapNano > 100_000_000_000n)) ||
     [...config.accountAllowlist].some(id => !UUID.test(id)) ||
     typeof config.helperBudgetNanoPerMinute !== 'bigint' || config.helperBudgetNanoPerMinute <= 0n || config.helperBudgetNanoPerMinute > 1_000_000_000n ||
@@ -129,18 +132,26 @@ export class HostedHelpers {
     validateConfig(config); this.config = Object.freeze({ ...config, accountAllowlist: new Set(config.accountAllowlist) });
   }
   get available(): boolean { return true; }
+  get paidFundingPolicy() { return { enabled: this.config.publicPaidAccess===true,
+    helperBudgetNanoPerMinute: this.config.helperBudgetNanoPerMinute, rateVersion: HOSTED_HELPER_RATE_VERSION }; }
   allows(account: string): boolean { return this.config.publicMinuteAccess===true || this.config.accountAllowlist.has(account); }
   /** Call inside voice admission's transaction after inserting its minute-funded session, before provider creation. */
   async reserveSessionBudget(sql: PoolClient, account: string, sessionID: string): Promise<void> {
     if (!this.allows(account)) throw new ServiceError('hosted_helpers_not_ready', 503);
     await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-hosted-funding-cap'))");
+    const owner=(await sql.query('SELECT funding_mode FROM hosted_sessions WHERE id=$1 AND account_id=$2',[sessionID,account])).rows[0];
+    if (owner?.funding_mode==='ai-value') await lockPaidWallet(sql,account);
     const session = (await sql.query(`SELECT h.*,a.deleted_at,r.account_id AS minute_owner,r.amount_ms AS minute_amount,r.state AS minute_state
       FROM hosted_sessions h JOIN accounts a ON a.id=h.account_id LEFT JOIN minute_reservations r ON r.id=h.minute_reservation_id
       WHERE h.id=$1 AND h.account_id=$2 FOR UPDATE OF h`, [sessionID, account])).rows[0];
     if (!session || session.deleted_at) throw new ServiceError('live_session_not_found', 404);
-    if (this.config.publicMinuteAccess && !session.public_minutes) throw new ServiceError('helper_session_funding_unavailable',409);
-    if (!['creating','active'].includes(session.state) || !session.reserved_ms || session.minute_owner !== account ||
-      Number(session.minute_amount) !== Number(session.reserved_ms) || session.minute_state !== 'open')
+    const paid = session.funding_mode==='ai-value';
+    if (paid) {
+      if (!this.config.publicPaidAccess) throw new ServiceError('hosted_paid_not_ready',503);
+    }
+    if (this.config.publicMinuteAccess && !session.public_minutes && !paid) throw new ServiceError('helper_session_funding_unavailable',409);
+    if (!['creating','active'].includes(session.state) || (paid ? !session.limit_ms : !session.reserved_ms || session.minute_owner !== account ||
+      Number(session.minute_amount) !== Number(session.reserved_ms) || session.minute_state !== 'open'))
       throw new ServiceError('helper_session_funding_unavailable', 409);
     await this.ensureBudget(sql, session);
   }
@@ -177,15 +188,20 @@ export class HostedHelpers {
   private async reserve(account: string, sessionID: string, input: HostedHelperInput, providerBody: HostedResponsesRequest) {
     return transaction(this.db, async sql => {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-hosted-funding-cap'))");
+      const owner = (await sql.query('SELECT funding_mode FROM hosted_sessions WHERE id=$1 AND account_id=$2', [sessionID,account])).rows[0];
+      const paidWallet = owner?.funding_mode==='ai-value' ? await lockPaidWallet(sql,account) : undefined;
       const session = (await sql.query(`SELECT h.*,a.deleted_at,r.account_id AS minute_owner,r.amount_ms AS minute_amount,r.state AS minute_state,
         EXISTS(SELECT 1 FROM minute_purchase_transactions p WHERE p.account_id=h.account_id
           AND (NOT h.public_minutes OR p.environment='live') AND p.recovered_ms<LEAST(p.reversal_target_ms,p.granted_ms)) AS refund_due,now() AS database_now
         FROM hosted_sessions h JOIN accounts a ON a.id=h.account_id LEFT JOIN minute_reservations r ON r.id=h.minute_reservation_id
         WHERE h.id=$1 AND h.account_id=$2 FOR UPDATE OF h`, [sessionID, account])).rows[0];
       if (!session || session.deleted_at) throw new ServiceError('live_session_not_found', 404);
-      if (this.config.publicMinuteAccess && !session.public_minutes) throw new ServiceError('helper_session_funding_unavailable',409);
-      if (!session.minute_reservation_id || !session.reserved_ms) throw new ServiceError('helper_minute_session_required', 409);
-      if (session.minute_owner !== account || Number(session.minute_amount) !== Number(session.reserved_ms) || session.refund_due ||
+      const paid = session.funding_mode==='ai-value';
+      if (paid && !this.config.publicPaidAccess) throw new ServiceError('hosted_paid_not_ready',503);
+      if (this.config.publicMinuteAccess && !session.public_minutes && !paid) throw new ServiceError('helper_session_funding_unavailable',409);
+      if (!paid && (!session.minute_reservation_id || !session.reserved_ms)) throw new ServiceError('helper_minute_session_required', 409);
+      if (paid ? !paidWallet || paidWallet.fundedBalance < paidWallet.reserved :
+        session.minute_owner !== account || Number(session.minute_amount) !== Number(session.reserved_ms) || session.refund_due ||
         (session.state === 'active' ? session.minute_state !== 'open' : session.minute_state !== 'settled'))
         throw new ServiceError('helper_session_funding_unavailable', 409);
       if ((await sql.query('SELECT request_id FROM hosted_helper_requests WHERE request_id=$1', [input.requestID])).rowCount)
@@ -219,65 +235,118 @@ export class HostedHelpers {
         outputTokens: providerBody.max_output_tokens, searchCalls: input.search ? 1 : 0 });
       if (BigInt(counts.exposure) + hold > available) throw new ServiceError('helper_budget_exhausted', 429);
       const activeUntil = new Date(now + Number(budget.timeout_ms) + 5000);
-      await sql.query(`INSERT INTO hosted_helper_requests(request_id,session_id,purpose,search_requested,input_token_ceiling,output_token_ceiling,hold_nano,active_until)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [input.requestID, sessionID, input.purpose, Boolean(input.search), inputCeiling, providerBody.max_output_tokens, hold.toString(), activeUntil]);
+      let cashReservation: string | null = null;
+      if (paid) {
+        if (BigInt(budget.cash_pool_nano)<hold) throw new ServiceError('helper_budget_exhausted',429);
+        cashReservation=randomUUID();
+        await appendEntry(sql,account,`helper-pool-allocate:${input.requestID}`,'release',0n,-hold,budget.rate_version);
+        await sql.query('UPDATE hosted_helper_sessions SET cash_pool_nano=cash_pool_nano-$2 WHERE session_id=$1',[sessionID,hold.toString()]);
+        await reservePaidInTransaction(sql,account,cashReservation,`helper:${input.requestID}`,hold,budget.rate_version);
+      }
+      await sql.query(`INSERT INTO hosted_helper_requests(request_id,session_id,purpose,search_requested,input_token_ceiling,output_token_ceiling,hold_nano,active_until,cash_reservation_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [input.requestID, sessionID, input.purpose, Boolean(input.search), inputCeiling, providerBody.max_output_tokens, hold.toString(), activeUntil,cashReservation]);
       return { timeout_ms: Number(budget.timeout_ms), input_token_ceiling: inputCeiling, active_until: activeUntil };
     });
   }
   private async ensureBudget(sql: PoolClient, session: any) {
     const previous = (await sql.query('SELECT * FROM hosted_helper_sessions WHERE session_id=$1 FOR UPDATE', [session.id])).rows[0];
     if (previous) return previous;
-    const amount = (BigInt(session.reserved_ms) * this.config.helperBudgetNanoPerMinute + 59_999n) / 60_000n;
+    const paid=session.funding_mode==='ai-value', duration=Number(paid ? session.limit_ms : session.reserved_ms);
+    const amount = (BigInt(duration) * this.config.helperBudgetNanoPerMinute + 59_999n) / 60_000n;
     const earnedTime = Number(session.minimum_charge_ms) > 0;
     const postClose = earnedTime && session.state === 'closed'
       ? BigInt(earnedMilliseconds(session)) * this.config.helperBudgetNanoPerMinute / 60_000n : null;
     const liability = postClose ?? amount;
-    if (!this.config.publicMinuteAccess) {
+    if (!this.config.publicMinuteAccess && !paid) {
       const voice = BigInt((await sql.query('SELECT COALESCE(sum(funding_exposure_nano),0) AS total FROM hosted_sessions')).rows[0].total);
       if (voice + await hostedHelperExposure(sql) + liability > this.config.aggregateFundingCapNano)
         throw new ServiceError('hosted_funding_cap_reached', 503);
     }
+    if (paid) {
+      const wallet=await lockPaidWallet(sql,session.account_id);
+      if (wallet.fundedAvailable<amount) throw new ServiceError('insufficient_credit',402);
+      await appendEntry(sql,session.account_id,`helper-pool-open:${session.id}`,'reserve',0n,amount,HOSTED_HELPER_RATE_VERSION);
+    }
     return (await sql.query(`INSERT INTO hosted_helper_sessions(session_id,reserved_ms,per_minute_nano,budget_nano,liability_nano,
       request_limit,search_limit,concurrency_limit,post_session_ms,framing_tokens,search_input_tokens,timeout_ms,rate_version,activation_pending,expires_at,
-      earned_time,requests_per_minute,post_close_budget_nano)
-      VALUES($1,$2,$3,$4,$15,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$16,$17,$18) RETURNING *`,
-    [session.id, session.reserved_ms, this.config.helperBudgetNanoPerMinute.toString(), amount.toString(),
-      Math.max(1, Math.ceil(Number(session.reserved_ms) * this.config.maxRequestsPerMinute / 60_000)), this.config.maxSearchesPerSession,
+      earned_time,requests_per_minute,post_close_budget_nano,cash_funded,cash_pool_nano)
+      VALUES($1,$2,$3,$4,$15,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$16,$17,$18,$19,$20) RETURNING *`,
+    [session.id, duration, this.config.helperBudgetNanoPerMinute.toString(), amount.toString(),
+      Math.max(1, Math.ceil(duration * this.config.maxRequestsPerMinute / 60_000)), this.config.maxSearchesPerSession,
       this.config.maxConcurrentPerSession, this.config.postSessionMilliseconds, this.config.inputFramingTokenAllowance, this.config.searchInputTokenAllowance,
       this.config.timeoutMilliseconds, HOSTED_HELPER_RATE_VERSION, session.state === 'creating',
       new Date(session.deadline.getTime() + this.config.postSessionMilliseconds), liability.toString(), earnedTime,
-      this.config.maxRequestsPerMinute, postClose?.toString() ?? null])).rows[0];
+      this.config.maxRequestsPerMinute, postClose?.toString() ?? null,paid,paid ? amount.toString() : '0'])).rows[0];
   }
   private async uncertain(requestID: string) {
     // A failed write leaves 'pending'. Both states retain funding; concurrency expires at active_until.
     await this.db.query("UPDATE hosted_helper_requests SET state='uncertain',finished_at=now() WHERE request_id=$1 AND state='pending'", [requestID]).catch(() => {});
   }
   private async settle(requestID: string, sessionID: string, observed: ObservedResponse, charge: bigint, breached: boolean) {
-    await transaction(this.db, async sql => {
+    const overrun = await transaction(this.db, async sql => {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-hosted-funding-cap'))");
+      const session=(await sql.query('SELECT account_id,funding_mode FROM hosted_sessions WHERE id=$1',[sessionID])).rows[0];
+      if (!session) throw new ServiceError('live_session_not_found',404);
+      if (session.funding_mode==='ai-value') await lockWallet(sql,session.account_id);
       const budget = (await sql.query('SELECT * FROM hosted_helper_sessions WHERE session_id=$1 FOR UPDATE', [sessionID])).rows[0];
+      const attempt=(await sql.query('SELECT * FROM hosted_helper_requests WHERE request_id=$1 AND session_id=$2 FOR UPDATE',[requestID,sessionID])).rows[0];
+      if (!attempt || attempt.state!=='pending') throw new ServiceError('helper_settlement_conflict',503);
+      if (attempt.cash_reservation_id && charge>BigInt(attempt.hold_nano)) {
+        await sql.query(`INSERT INTO hosted_cash_reconciliation(reference,session_id,request_id,provider_response_id,usage,provider_cost_nano,reason)
+          VALUES($1,$2,$3,$4,$5,$6,'helper_hold_exceeded') ON CONFLICT(reference) DO NOTHING`,
+          [`helper:${requestID}`,sessionID,requestID,observed.id,JSON.stringify(observed.usage),charge.toString()]);
+        await sql.query('UPDATE hosted_helper_requests SET limit_breached=true WHERE request_id=$1',[requestID]);
+        return true;
+      }
+      if (attempt.cash_reservation_id) await settlePaidInTransaction(sql,session.account_id,attempt.cash_reservation_id,charge);
       const updated = await sql.query(`UPDATE hosted_helper_requests SET state='settled',provider_response_id=$2,input_tokens=$3,cached_input_tokens=$4,
         cache_write_tokens=$5,output_tokens=$6,search_calls=$7,cost_nano=$8,limit_breached=$9,finished_at=now()
         WHERE request_id=$1 AND state='pending'`, [requestID, observed.id, observed.usage.inputTokens, observed.usage.cachedInputTokens,
         observed.usage.cacheWriteTokens, observed.usage.outputTokens, observed.usage.searchCalls, charge.toString(), breached]);
       if (updated.rowCount !== 1) throw new ServiceError('helper_settlement_conflict', 503);
       await refreshLiability(sql, budget);
+      if (budget.cash_funded) await syncCashPool(sql,session.account_id,budget,`settle:${requestID}`);
+      return false;
     });
+    if (overrun) throw new ServiceError('helper_provider_limit_exceeded',503);
+  }
+  /** Voice finalization shrinks future allowance; requests already sent retain separate cash holds. */
+  async closeCashBudget(sql: PoolClient, account: string, sessionID: string) {
+    const budget=(await sql.query('SELECT * FROM hosted_helper_sessions WHERE session_id=$1 FOR UPDATE',[sessionID])).rows[0];
+    if (budget?.cash_funded) await syncCashPool(sql,account,budget,'voice-close');
   }
   /** Release only unused session allowance; unresolved provider attempts keep their holds indefinitely. */
   async expireBudgets(): Promise<number> {
     return transaction(this.db, async sql => {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-hosted-funding-cap'))");
-      const rows = (await sql.query(`SELECT b.* FROM hosted_helper_sessions b JOIN hosted_sessions h ON h.id=b.session_id
+      const rows = (await sql.query(`SELECT b.*,h.account_id FROM hosted_helper_sessions b JOIN hosted_sessions h ON h.id=b.session_id
         WHERE b.state='open' AND (NOT b.activation_pending OR h.state<>'creating')
           AND (b.expires_at<=now() OR (h.helper_closed_at IS NOT NULL AND
-          h.helper_closed_at + b.post_session_ms * interval '1 millisecond' <= now())) FOR UPDATE OF b`)).rows;
+          h.helper_closed_at + b.post_session_ms * interval '1 millisecond' <= now()))`)).rows;
       for (const budget of rows) {
+        if (budget.cash_funded) await lockWallet(sql,budget.account_id);
+        await sql.query('SELECT session_id FROM hosted_helper_sessions WHERE session_id=$1 FOR UPDATE',[budget.session_id]);
         await sql.query("UPDATE hosted_helper_sessions SET state='expired' WHERE session_id=$1", [budget.session_id]);
         await refreshLiability(sql, { ...budget, state: 'expired' });
+        if (budget.cash_funded) await syncCashPool(sql,budget.account_id,{...budget,state:'expired'},'expire');
       }
       return rows.length;
     });
+  }
+}
+async function syncCashPool(sql: PoolClient,account: string,budget: any,event: string) {
+  const wallet=await lockWallet(sql,account);
+  const exposure=BigInt((await sql.query(`SELECT COALESCE(sum(CASE WHEN state='settled' THEN cost_nano ELSE hold_nano END),0) AS total
+    FROM hosted_helper_requests WHERE session_id=$1`,[budget.session_id])).rows[0].total);
+  const allowance=BigInt(budget.post_close_budget_nano ?? budget.budget_nano);
+  const current=BigInt(budget.cash_pool_nano);
+  let desired=budget.state==='open' && allowance>exposure ? allowance-exposure : 0n;
+  // A refund can consume backing while a request is in flight. Never re-reserve unbacked funds.
+  if (desired>current && desired-current>wallet.fundedAvailable) desired=current+wallet.fundedAvailable;
+  const delta=desired-current;
+  if (delta) {
+    await appendEntry(sql,account,`helper-pool:${budget.session_id}:${event}`,delta>0n?'reserve':'release',0n,delta,budget.rate_version);
+    await sql.query('UPDATE hosted_helper_sessions SET cash_pool_nano=$2 WHERE session_id=$1',[budget.session_id,desired.toString()]);
   }
 }
 async function refreshLiability(sql: PoolClient, budget: any): Promise<void> {
@@ -288,10 +357,12 @@ async function refreshLiability(sql: PoolClient, budget: any): Promise<void> {
   await sql.query('UPDATE hosted_helper_sessions SET liability_nano=$2 WHERE session_id=$1', [budget.session_id, amount.toString()]);
 }
 function earnedMilliseconds(session: any): number {
-  const value = session.state === 'closed' ? session.charged_ms : Math.max(Number(session.minimum_charge_ms), Number(session.observed_ms));
+  const paid=session.funding_mode==='ai-value';
+  const value = session.state === 'closed' ? paid ? session.provider_attempted_at ? Math.max(15_000,Number(session.observed_ms)) : 0 : session.charged_ms
+    : Math.max(Number(session.minimum_charge_ms), Number(session.observed_ms));
   if (value === null || !Number.isSafeInteger(Number(value)) || Number(value) < 0)
     throw new ServiceError('helper_session_funding_unavailable', 409);
-  return Math.min(Number(session.reserved_ms), Number(value));
+  return Math.min(Number(paid ? session.limit_ms : session.reserved_ms), Number(value));
 }
 interface ObservedResponse { id: string; usage: HostedHelperUsage }
 function observedResponse(raw: unknown): ObservedResponse {

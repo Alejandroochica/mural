@@ -53,6 +53,7 @@ data class MinuteBalance(
     val balanceMilliseconds: Long,
     val reservedMilliseconds: Long,
     val availableMilliseconds: Long,
+    val paid: PaidConversationBalance? = null,
 ) {
     init {
         require(unit == "milliseconds" && billingBasis == "connected-conversation-time")
@@ -60,6 +61,9 @@ data class MinuteBalance(
         require(reservedMilliseconds in 0..balanceMilliseconds)
         require(availableMilliseconds == balanceMilliseconds - reservedMilliseconds)
     }
+    val canStartConversation get() = availableMilliseconds > 0 || paid?.available == true
+    val readinessMilliseconds get() = if (availableMilliseconds > 0) availableMilliseconds
+        else paid?.takeIf { it.available }?.estimatedMilliseconds ?: 0L
 }
 
 interface AccountService {

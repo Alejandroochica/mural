@@ -72,6 +72,7 @@ fun MinutePurchaseSheet(
                     Text(stringResource(R.string.hosted_minimum_charge_disclosure), style = MaterialTheme.typography.bodySmall,
                         color = MuralColors.Secondary, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 480.dp)
                             .testTag("minute-purchase-minimum"))
+                    if (!needsSignIn) state.balance?.let { PaidBalanceText(it) }
                     Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         state.packs.forEach { pack ->
                             MinutePackCard(pack, enabled = canChoose, onBuy = { onBuy(pack.sku) })
@@ -120,8 +121,10 @@ fun MinutePurchaseSheet(
 
 @Composable
 private fun MinutePackCard(pack: MinutePack, enabled: Boolean, onBuy: () -> Unit) {
-    val minutes = pluralStringResource(R.plurals.minute_purchases_pack_minutes, pack.minutes,
-        NumberFormat.getIntegerInstance().format(pack.minutes))
+    val minutes = pack.aiValue?.let { value -> stringResource(R.string.paid_pack_estimate,
+        NumberFormat.getNumberInstance().apply { maximumFractionDigits = 1; roundingMode = RoundingMode.DOWN }
+            .format(value.estimatedMilliseconds / 60_000.0)) }
+        ?: pluralStringResource(R.plurals.minute_purchases_pack_minutes, pack.minutes, NumberFormat.getIntegerInstance().format(pack.minutes))
     val action = stringResource(R.string.minute_purchases_pack_action, minutes, pack.formattedPrice)
     Surface(onClick = onBuy, enabled = enabled, shape = RoundedCornerShape(26.dp),
         color = Color.White.copy(alpha = if (enabled) .88f else .60f),
@@ -130,6 +133,24 @@ private fun MinutePackCard(pack: MinutePack, enabled: Boolean, onBuy: () -> Unit
         // A vertical card preserves full localized prices and long text at larger font sizes.
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(minutes, style = MaterialTheme.typography.headlineMedium, color = MuralColors.Ink)
+            pack.aiValue?.let { value ->
+                Text(stringResource(R.string.paid_balance_detail), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+                val quote = value.quote
+                val money = NumberFormat.getCurrencyInstance().apply { currency = java.util.Currency.getInstance(quote.currency.uppercase(java.util.Locale.ROOT)) }
+                val feePercent = NumberFormat.getNumberInstance().apply { maximumFractionDigits = 2 }
+                    .format(quote.serviceFeeBasisPoints / 100.0)
+                val lines = listOf(stringResource(R.string.paid_ai_allocation) to quote.aiValueMinor,
+                    stringResource(R.string.paid_mural_fee, feePercent) to quote.serviceFeeMinor,
+                    stringResource(R.string.paid_processing_fee) to quote.processingEstimateMinor,
+                    stringResource(R.string.paid_processing_buffer) to quote.processingBufferMinor)
+                lines.forEach { (label, amount) ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+                        Text(money.format(BigDecimal.valueOf(amount, quote.currencyExponent)), style = MaterialTheme.typography.bodySmall,
+                            color = MuralColors.Ink)
+                    }
+                }
+            }
             Surface(color = MuralColors.Peach.copy(alpha = if (enabled) 1f else .65f), shape = RoundedCornerShape(50)) {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {

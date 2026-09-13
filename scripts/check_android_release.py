@@ -341,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         spec = json.loads((args.release_dir / "release-spec.json").read_text())
         require(spec["schemaVersion"] == 1, "Unsupported release specification")
-        require(spec["scope"] in ("internal-byok-preview", "hosted-minute-release"), "Unknown release scope")
+        require(spec["scope"] in ("internal-byok-preview", "hosted-guest-preview", "hosted-minute-release"), "Unknown release scope")
         result["scope"] = spec["scope"]
         result["checks"]["branding"] = check_branding(ROOT, spec)
         locale = below(args.release_dir / "metadata", spec["metadataLocale"])
