@@ -4,6 +4,7 @@ import { transaction, type Database } from './db.js';
 import { ServiceError } from './errors.js';
 import { lockWallet } from './ledger.js';
 import type { PoolClient } from 'pg';
+import { appendMinuteEntry, captureWelcomeOffer } from './minutes.js';
 
 export type Provider = 'google' | 'apple';
 export type Identity = { provider: Provider; subject: string; email: string | null };
@@ -54,12 +55,13 @@ export async function exchangeIdentity(db: Database, provider: Provider, token: 
     let account = (await sql.query('SELECT account_id FROM identities WHERE provider=$1 AND subject=$2', [identity.provider, identity.subject])).rows[0]?.account_id;
     if (!account) {
       await sql.query("SELECT pg_advisory_xact_lock(hashtext('mural-account-capacity'))");
-      const count = Number((await sql.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL')).rows[0].count);
+      const count = Number((await sql.query('SELECT count(*) AS count FROM accounts WHERE deleted_at IS NULL AND NOT is_guest')).rows[0].count);
       if (count >= 10_000) throw new ServiceError('account_capacity_reached', 503);
       account = randomUUID();
       await sql.query('INSERT INTO accounts(id,email) VALUES($1,$2)', [account, identity.email]);
       await sql.query('INSERT INTO identities(provider,subject,account_id) VALUES($1,$2,$3)', [identity.provider, identity.subject, account]);
       await sql.query('INSERT INTO wallets(account_id) VALUES($1)', [account]);
+      await captureWelcomeOffer(sql, account);
     }
     await lockWallet(sql, account, true);
     if (identity.email !== null) await sql.query('UPDATE accounts SET email=$2 WHERE id=$1', [account, identity.email]);
@@ -69,9 +71,9 @@ export async function exchangeIdentity(db: Database, provider: Provider, token: 
     return { accountID: account as string, accessToken: bearer, expiresInSeconds: 86_400 };
   });
 }
-export async function authenticate(db: Database, authorization?: string): Promise<string> {
+export async function authenticate(db: Database, authorization?: string, allowGuest = false): Promise<string> {
   const result = await db.query(`SELECT s.account_id FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
-    WHERE s.token_hash=$1 AND s.expires_at>now() AND s.revoked_at IS NULL AND a.deleted_at IS NULL`, [bearerHash(authorization)]);
+    WHERE s.token_hash=$1 AND s.expires_at>now() AND s.revoked_at IS NULL AND a.deleted_at IS NULL AND ($2 OR NOT a.is_guest)`, [bearerHash(authorization), allowGuest]);
   const id = result.rows[0]?.account_id;
   if (!id) throw new ServiceError('sign_in_required', 401);
   return id;
@@ -88,7 +90,7 @@ async function assertSession(sql: PoolClient, account: string, authorization: st
 export async function accountProfile(db: Database, authorization?: string) {
   const result = await db.query(`SELECT a.id,a.email,a.created_at,ARRAY(SELECT DISTINCT provider FROM identities WHERE account_id=a.id ORDER BY provider) AS providers
     FROM auth_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=$1 AND s.expires_at>now()
-    AND s.revoked_at IS NULL AND a.deleted_at IS NULL`, [bearerHash(authorization)]);
+    AND s.revoked_at IS NULL AND a.deleted_at IS NULL AND NOT a.is_guest`, [bearerHash(authorization)]);
   const row = result.rows[0];
   if (!row) throw new ServiceError('sign_in_required', 401);
   return { accountID: row.id as string, email: row.email as string | null, providers: row.providers as Provider[], createdAt: (row.created_at as Date).toISOString() };
@@ -115,6 +117,10 @@ export async function deleteAccount(db: Database, account: string, appleRevoker?
     const pending = (await sql.query("SELECT id FROM checkout_orders WHERE account_id=$1 AND state='created' LIMIT 1", [account])).rowCount;
     // The foundation has no refund/checkout-expiry workflow yet. Do not orphan paid value.
     if (pending || wallet.balance !== 0n || wallet.reserved !== 0n) throw new ServiceError('unresolved_billing', 409);
+    const minutes = (await sql.query('SELECT balance_ms,reserved_ms FROM minute_wallets WHERE account_id=$1', [account])).rows[0];
+    const minutePurchase = (await sql.query("SELECT 1 FROM minute_entries WHERE account_id=$1 AND kind='purchase' LIMIT 1", [account])).rowCount;
+    if (Number(minutes?.reserved_ms ?? 0) > 0 || (minutePurchase && Number(minutes?.balance_ms ?? 0) > 0))
+      throw new ServiceError('unresolved_billing', 409);
     const apple = (await sql.query("SELECT subject FROM identities WHERE account_id=$1 AND provider='apple'", [account])).rows[0];
     if (apple) {
       if (!appleRevoker || !authorizationCode) throw new ServiceError('apple_revocation_not_configured', 503);
@@ -122,15 +128,21 @@ export async function deleteAccount(db: Database, account: string, appleRevoker?
     }
     await sql.query('DELETE FROM identities WHERE account_id=$1', [account]);
     await sql.query('DELETE FROM auth_sessions WHERE account_id=$1', [account]);
+    // Unused promotional time is forfeited on deletion; it must not trap a free account.
+    if (Number(minutes?.balance_ms ?? 0) > 0)
+      await appendMinuteEntry(sql, account, `minute-deletion:${account}`, 'forfeit', -Number(minutes.balance_ms), 0);
     const records = await sql.query(`SELECT 1 FROM ledger WHERE account_id=$1 UNION ALL SELECT 1 FROM reservations WHERE account_id=$1
       UNION ALL SELECT 1 FROM checkout_orders WHERE account_id=$1 UNION ALL SELECT 1 FROM usage_records WHERE account_id=$1
-      UNION ALL SELECT 1 FROM hosted_sessions WHERE account_id=$1 LIMIT 1`, [account]);
+      UNION ALL SELECT 1 FROM hosted_sessions WHERE account_id=$1 UNION ALL SELECT 1 FROM minute_entries WHERE account_id=$1
+      UNION ALL SELECT 1 FROM minute_campaign_recipients WHERE account_id=$1
+      UNION ALL SELECT 1 FROM minute_guest_links WHERE member_account_id=$1 OR guest_account_id=$1 LIMIT 1`, [account]);
     if (records.rowCount) {
       await sql.query('UPDATE accounts SET email=NULL,deleted_at=now() WHERE id=$1', [account]);
       return { retainedFinancialRecords: true };
     }
     // Signup-only accounts have no financial retention reason to keep their ID or empty wallet.
     await sql.query('DELETE FROM wallets WHERE account_id=$1', [account]);
+    await sql.query('DELETE FROM minute_wallets WHERE account_id=$1', [account]);
     await sql.query('DELETE FROM accounts WHERE id=$1', [account]);
     return { retainedFinancialRecords: false };
   });

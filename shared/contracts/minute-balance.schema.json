@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mural.chat/contracts/minute-balance-v1.json",
+  "title": "Mural conversation time balance",
+  "type": "object",
+  "required": ["unit", "balanceMilliseconds", "reservedMilliseconds", "availableMilliseconds", "billingBasis"],
+  "properties": {
+    "unit": { "const": "milliseconds" },
+    "billingBasis": { "const": "connected-conversation-time" },
+    "balanceMilliseconds": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "reservedMilliseconds": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "availableMilliseconds": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+  },
+  "additionalProperties": false
+}

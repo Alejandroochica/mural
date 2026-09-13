@@ -2,6 +2,8 @@
 
 This backend prepares accounts, a credit ledger, and **Stripe sandbox** payments. Public funded conversations and free trials remain unavailable; live Stripe keys are rejected. A disabled, operator-allowlisted voice experiment now has a real network adapter and durable accounting, tested entirely against a local fake provider. The existing iPhone BYOK build continues to operate independently.
 
+Consumer pricing is moving to **conversation minutes**. The time ledger, configurable welcome allowance, guest-to-account transfer and audited grants are implemented separately from provider cost accounting. They do not activate hosted calls or real purchases. Read [conversation minutes](../docs/conversation-minutes.md) and [how to manage free minutes](../docs/manage-free-minutes.md) before configuring the operator controls.
+
 ## Run locally
 
 Use Node.js 22.19 or later, npm, and a separate PostgreSQL database. PostgreSQL 14 was used for the integration tests; the deployment configuration uses PostgreSQL 17.
@@ -81,6 +83,10 @@ All monetary strings are integer **nanoUSD**: 1 USD = 1,000,000,000 nanoUSD. A d
 | `POST /v1/auth/challenge` | Empty JSON object | `challengeID`, `nonce`, `expiresInSeconds` |
 | `POST /v1/auth/exchange` | `provider`, `idToken`, `challengeID` | `accountID`, `accessToken`, `expiresInSeconds` |
 | `GET /v1/wallet` | Bearer token | `currency`, `balanceNanoUSD`, `reservedNanoUSD`, `availableNanoUSD` |
+| `GET /v1/minutes` | Guest or member bearer token | Exact time balance, reservation and available milliseconds |
+| `POST /v1/guest/minutes` | Verified guest attestation proof | Guest session and remaining allowance; disabled without a verified adapter |
+| `POST /v1/minutes/welcome` | Member token and account-bound attestation proof | Claims the signup offer once within allocation budgets |
+| `POST /v1/minutes/link-guest` | Member token; `guestAccessToken` | Transfers unused guest time once after its reservations settle |
 | `POST /v1/auth/sign-out` | Bearer token | Revokes this account's Mural sessions |
 | `DELETE /v1/account` | Bearer token; Apple additionally needs a fresh authorization code | Removes identity/email/session data; retains required financial records under an opaque ID |
 | `GET /v1/pricing` | None | Dated provider rates, money units, and separate-fee policy |

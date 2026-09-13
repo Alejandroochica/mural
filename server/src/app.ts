@@ -9,10 +9,12 @@ import { trialEligibility, UnconfiguredAttestor, type TrialAttestor } from './tr
 import type { HostedVoice } from './hosted-voice.js';
 import { ACCESS_REQUEST_PATH, trustedClientNetwork, type AccessRequests } from './access-requests.js';
 import type { AuthAdmission } from './auth-admission.js';
+import { claimWelcomeMinutes, minuteBalance, UnconfiguredMinuteAttestor, type MinuteAttestor } from './minutes.js';
+import { startGuestMinutes, linkGuestMinutes, UnconfiguredGuestMinuteAttestor, type GuestMinuteAttestor } from './guest-minutes.js';
 
-export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests;
+export interface Services { db: Database; auth: AuthConfig; payments?: SandboxPayments; attestor?: TrialAttestor; minuteAttestor?: MinuteAttestor; guestMinuteAttestor?: GuestMinuteAttestor; appleRevoker?: AppleRevoker; hosted?: HostedVoice; accessRequests?: AccessRequests;
   accounts?: { admission: AuthAdmission; identityVerifier?: typeof verifyIdentity } }
-const accountPaths = new Set(['/v1/auth/challenge', '/v1/auth/exchange', '/v1/auth/sign-out', '/v1/account', '/v1/wallet']);
+const accountPaths = new Set(['/v1/auth/challenge', '/v1/auth/exchange', '/v1/auth/sign-out', '/v1/account', '/v1/wallet', '/v1/minutes/welcome', '/v1/minutes/link-guest']);
 const objectBody = (request: FastifyRequest): Record<string, unknown> => {
   if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) || Buffer.isBuffer(request.body)) throw new ServiceError('invalid_request');
   return request.body as Record<string, unknown>;
@@ -86,7 +88,8 @@ export function createApp(services: Services) {
     nanoUSDPerDollar: '1000000000', creditNanoUSD: '10000000', serviceFeePercent: 15,
     voice: { model: 'gpt-live-1', perMinuteNanoUSD: '50000000', billingUnit: 'active-session-seconds' },
     text: { model: 'gpt-5.6-luna', inputPerTokenNanoUSD: '200', cachedInputPerTokenNanoUSD: '20', outputPerTokenNanoUSD: '1200' },
-    searchPerCallNanoUSD: '10000000', paymentFees: 'quoted separately at checkout', hostedVoiceAvailable: false }));
+    searchPerCallNanoUSD: '10000000', paymentFees: 'quoted separately at checkout', hostedVoiceAvailable: false,
+    consumerUnit: 'conversation-minutes', consumerBillingBasis: 'connected-conversation-time', minutePacks: [], minutePurchasesAvailable: false }));
   app.route({ method: ['POST', 'OPTIONS'], url: ACCESS_REQUEST_PATH, bodyLimit: 1024,
     onRequest: async (request, reply) => {
       const access = services.accessRequests;
@@ -135,6 +138,18 @@ export function createApp(services: Services) {
     return exchangeIdentity(db, provider, stringField(body, 'idToken', 16_384), uuid(stringField(body, 'challengeID', 36)), services.auth, services.accounts?.identityVerifier);
   });
   app.get('/v1/account', async request => accountProfile(db, request.headers.authorization));
+  app.get('/v1/minutes', async request => minuteBalance(db, await authenticate(db, request.headers.authorization, true)));
+  app.post('/v1/guest/minutes', { bodyLimit: 20_000 }, async request =>
+    startGuestMinutes(db, objectBody(request), services.guestMinuteAttestor ?? new UnconfiguredGuestMinuteAttestor()));
+  app.post('/v1/minutes/link-guest', { bodyLimit: 1024 }, async request => {
+    const account = await authenticate(db, request.headers.authorization), body = objectBody(request);
+    if (Object.keys(body).some(key => key !== 'guestAccessToken')) throw new ServiceError('invalid_request');
+    return linkGuestMinutes(db, account, stringField(body, 'guestAccessToken', 43));
+  });
+  app.post('/v1/minutes/welcome', { bodyLimit: 20_000 }, async request => {
+    const account = await authenticate(db, request.headers.authorization);
+    return claimWelcomeMinutes(db, account, objectBody(request), services.minuteAttestor ?? new UnconfiguredMinuteAttestor());
+  });
   app.get('/v1/wallet', async request => {
     const wallet = (await db.query(`SELECT w.balance_nano,w.reserved_nano FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
       JOIN wallets w ON w.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now() AND s.revoked_at IS NULL AND a.deleted_at IS NULL`,
