@@ -2,7 +2,7 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import { createHmac, randomUUID } from 'node:crypto';
 import type { Database } from './db.js';
 import { accountProfile, authenticate, bearerHash, createChallenge, deleteAccount, exchangeIdentity, hasGoogleSignIn, signOut, type verifyIdentity, type AppleRevoker, type AuthConfig } from './auth.js';
-import { ServiceError } from './errors.js';
+import { HelperSessionLimitError, ServiceError } from './errors.js';
 import { applyStripeEvent, type SandboxPayments } from './payments.js';
 import { RATE_VERSION } from './pricing.js';
 import { aiPricingPolicy } from './ai-top-up-pricing.js';
@@ -112,6 +112,11 @@ export function createApp(services: Services) {
     const candidate = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : null;
     const status = error instanceof ServiceError ? error.status : typeof candidate === 'number' && candidate >= 400 && candidate < 500 ? candidate : 500;
     const code = error instanceof ServiceError ? error.code : status < 500 ? 'invalid_request' : 'service_unavailable';
+    if (error instanceof HelperSessionLimitError) {
+      if (error.retryable) reply.header('Retry-After', String(Math.ceil(error.retryAfterMilliseconds! / 1000)));
+      return reply.code(status).send({ error: { code, retryable: error.retryable,
+        ...(error.retryable ? { retryAfterMilliseconds: error.retryAfterMilliseconds } : {}) } });
+    }
     reply.code(status).send({ error: { code } });
   });
   const featureState=()=>{

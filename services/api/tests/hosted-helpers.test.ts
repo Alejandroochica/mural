@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { connectDatabase, transaction, type Database } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
 import { appendMinuteEntry } from '../src/minutes.js';
+import { HelperSessionLimitError } from '../src/errors.js';
 import { HostedHelpers, HOSTED_HELPER_MODEL, HOSTED_HELPER_RATE_VERSION, parseHostedHelperInput, hostedHelperBody,
   hostedHelperCost, hostedHelperExposure, type HostedHelperConfig, type HostedResponsesRequest, type HostedResponsesTransport } from '../src/hosted-helpers.js';
 
@@ -367,6 +368,81 @@ integration('earned request limits persist across gateways and do not borrow unc
   await db!.query('UPDATE hosted_sessions SET observed_ms=30000 WHERE id=$1',[f.sessionID]);
   await gateway.request(f.account,f.sessionID,input());
   assert.equal(f.transport.calls.length,3);
+});
+
+integration('earned request retry metadata uses the persisted policy and never records a rejected attempt', async () => {
+  const f = await seed(600_000, true), gateway = f.controller({ maxRequestsPerMinute: 6, helperBudgetNanoPerMinute: 50_000_000n });
+  await gateway.request(f.account, f.sessionID, input({ purpose: 'typed_reply' }));
+  await gateway.request(f.account, f.sessionID, input());
+  await db!.query('UPDATE hosted_sessions SET observed_ms=6000 WHERE id=$1', [f.sessionID]);
+  const request = input(), before = (await db!.query('SELECT liability_nano FROM hosted_helper_sessions')).rows[0];
+  const rejects = { code: 'helper_session_limit', status: 429, retryable: true, retryAfterMilliseconds: 15_001 };
+  await assert.rejects(f.controller({ maxRequestsPerMinute: 24 }).request(f.account, f.sessionID, request), rejects);
+  await assert.rejects(gateway.request(f.account, f.sessionID, request), rejects);
+  assert.equal(f.transport.calls.length, 2);
+  assert.equal((await db!.query('SELECT count(*) AS total FROM hosted_helper_requests')).rows[0].total, '2');
+  assert.deepEqual((await db!.query('SELECT liability_nano FROM hosted_helper_sessions')).rows[0], before);
+  await db!.query('UPDATE hosted_sessions SET observed_ms=20001 WHERE id=$1', [f.sessionID]);
+  await gateway.request(f.account, f.sessionID, request);
+  await assert.rejects(gateway.request(f.account, f.sessionID, request), { code: 'helper_request_already_attempted' });
+  assert.equal(f.transport.calls.length, 3);
+});
+
+integration('twenty-four shared requests per minute retain the same earned dollar budget', async () => {
+  const f = await seed(600_000, true), gateway = f.controller({ maxRequestsPerMinute: 24, helperBudgetNanoPerMinute: 50_000_000n });
+  await db!.query('UPDATE hosted_sessions SET observed_ms=6000 WHERE id=$1', [f.sessionID]);
+  for (let i = 0; i < 6; i++) await gateway.request(f.account, f.sessionID, input({ purpose: i % 2 ? 'typed_reply' : 'meaning' }));
+  await assert.rejects(gateway.request(f.account, f.sessionID, input()),
+    { code: 'helper_session_limit', retryable: true, retryAfterMilliseconds: 10_001 });
+  const policy = (await db!.query('SELECT per_minute_nano,budget_nano,requests_per_minute,request_limit,concurrency_limit FROM hosted_helper_sessions')).rows[0];
+  assert.deepEqual(policy, { per_minute_nano: '50000000', budget_nano: '500000000', requests_per_minute: 24, request_limit: 240, concurrency_limit: 2 });
+  await db!.query('UPDATE hosted_sessions SET observed_ms=15001 WHERE id=$1', [f.sessionID]);
+  const large = input({ instructions: 'a'.repeat(16_384), input: 'b'.repeat(24_576) });
+  await assert.rejects(gateway.request(f.account, f.sessionID, large), { code: 'helper_budget_exhausted' });
+  assert.equal(f.transport.calls.length, 6);
+});
+
+integration('confirmed close makes an exhausted earned request allowance non-retryable', async () => {
+  const f = await seed(600_000, true), gateway = f.controller({ maxRequestsPerMinute: 6 });
+  await gateway.request(f.account, f.sessionID, input());
+  await gateway.request(f.account, f.sessionID, input());
+  await db!.query("UPDATE hosted_sessions SET state='closed',charged_ms=15000 WHERE id=$1", [f.sessionID]);
+  await db!.query("UPDATE minute_reservations SET state='settled',used_ms=15000 WHERE id=$1", [f.reservationID]);
+  await assert.rejects(gateway.request(f.account, f.sessionID, input()),
+    { code: 'helper_session_limit', retryable: false, retryAfterMilliseconds: undefined });
+  assert.equal(f.transport.calls.length, 2);
+});
+
+integration('earned request retry is withheld when the active deadline cannot accommodate new capacity', async () => {
+  const f = await seed(600_000, true), gateway = f.controller({ maxRequestsPerMinute: 6 });
+  await gateway.request(f.account, f.sessionID, input());
+  await gateway.request(f.account, f.sessionID, input());
+  await db!.query("UPDATE hosted_sessions SET observed_ms=6000,deadline=now()+interval '5 seconds' WHERE id=$1", [f.sessionID]);
+  await assert.rejects(gateway.request(f.account, f.sessionID, input()),
+    { code: 'helper_session_limit', retryable: false, retryAfterMilliseconds: undefined });
+  assert.equal(f.transport.calls.length, 2);
+});
+
+integration('final count and search ceilings never advise waiting for more voice time', async () => {
+  const f = await seed(15_000, true), gateway = f.controller({ maxRequestsPerMinute: 6 });
+  await gateway.request(f.account, f.sessionID, input());
+  await gateway.request(f.account, f.sessionID, input());
+  await assert.rejects(gateway.request(f.account, f.sessionID, input()),
+    { code: 'helper_session_limit', retryable: false, retryAfterMilliseconds: undefined });
+  // Both ceilings are exhausted; search is a hard limit even if count capacity could grow.
+  const g = await seed(600_000, true), noSearch = g.controller({ maxRequestsPerMinute: 6, maxSearchesPerSession: 0 });
+  await noSearch.request(g.account, g.sessionID, input());
+  await noSearch.request(g.account, g.sessionID, input());
+  await assert.rejects(noSearch.request(g.account, g.sessionID, input({ purpose: 'topic', search: true })),
+    { code: 'helper_session_limit', retryable: false, retryAfterMilliseconds: undefined });
+  assert.equal(f.transport.calls.length, 2); assert.equal(g.transport.calls.length, 2);
+});
+
+test('helper admission retry delay rejects unbounded or malformed values', () => {
+  for (const delay of [0, 999, 60_001, 1000.5, NaN, Infinity]) assert.throws(() => new HelperSessionLimitError(delay));
+  assert.equal(new HelperSessionLimitError(1000).retryable, true);
+  assert.equal(new HelperSessionLimitError(60_000).retryable, true);
+  assert.equal(new HelperSessionLimitError().retryable, false);
 });
 
 integration('sub-minimum residues cannot spend the full fifteen-second helper allowance', async () => {

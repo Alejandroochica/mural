@@ -58,7 +58,7 @@ try {
       hostedHelpers = new HostedHelpers(db, new OpenAIHostedResponses(process.env.OPENAI_API_KEY ?? ''), {
         accountAllowlist: accounts, aggregateFundingCapNano: lifetimeFundingCapNano,publicMinuteAccess,publicPaidAccess,
         helperBudgetNanoPerMinute: BigInt(process.env.HOSTED_HELPER_BUDGET_PER_MINUTE_NANO ?? '50000000'),
-        maxRequestsPerMinute: Number(process.env.HOSTED_HELPER_REQUESTS_PER_MINUTE ?? '6'),
+        maxRequestsPerMinute: Number(process.env.HOSTED_HELPER_REQUESTS_PER_MINUTE ?? '24'),
         maxSearchesPerSession: Number(process.env.HOSTED_HELPER_SEARCHES_PER_SESSION ?? '0'),
         maxConcurrentPerSession: 2, maxConcurrentGlobal: 10, postSessionMilliseconds: 120_000,
         inputFramingTokenAllowance: 4096, searchInputTokenAllowance: 1_050_000, timeoutMilliseconds: 30_000,

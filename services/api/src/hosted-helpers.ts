@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { transaction, type Database } from './db.js';
-import { ServiceError } from './errors.js';
+import { HelperSessionLimitError, ServiceError } from './errors.js';
 import { RATE_VERSION } from './pricing.js';
 import { randomUUID } from 'node:crypto';
 import { appendEntry, lockPaidWallet, lockWallet, reservePaidInTransaction, settlePaidInTransaction } from './ledger.js';
@@ -227,7 +227,9 @@ export class HostedHelpers {
         count(*) FILTER(WHERE state<>'settled' AND active_until>now())::integer AS pending,
         COALESCE(sum(CASE WHEN state='settled' THEN cost_nano ELSE hold_nano END),0) AS exposure
         FROM hosted_helper_requests WHERE session_id=$1`, [sessionID])).rows[0];
-      if (counts.attempts >= requestLimit || (input.search && counts.searches >= budget.search_limit)) throw new ServiceError('helper_session_limit', 429);
+      if (input.search && counts.searches >= budget.search_limit) throw new HelperSessionLimitError();
+      if (counts.attempts >= requestLimit)
+        throw new HelperSessionLimitError(earnedRequestRetryDelay(session, budget, counts.attempts, active));
       const pendingGlobal = Number((await sql.query("SELECT count(*) AS total FROM hosted_helper_requests WHERE state<>'settled' AND active_until>now()")).rows[0].total);
       if (counts.pending >= budget.concurrency_limit || pendingGlobal >= this.config.maxConcurrentGlobal) throw new ServiceError('helper_concurrency_limit', 429);
       const inputCeiling = Buffer.byteLength(JSON.stringify(providerBody)) + budget.framing_tokens + (input.search ? budget.search_input_tokens : 0);
@@ -363,6 +365,20 @@ function earnedMilliseconds(session: any): number {
   if (value === null || !Number.isSafeInteger(Number(value)) || Number(value) < 0)
     throw new ServiceError('helper_session_funding_unavailable', 409);
   return Math.min(Number(paid ? session.limit_ms : session.reserved_ms), Number(value));
+}
+
+function earnedRequestRetryDelay(session: any, budget: any, attempts: number, active: boolean): number | undefined {
+  if (!active || !budget.earned_time || attempts >= budget.request_limit) return;
+  // ceil(earned * rate / 60000) must exceed the attempts already made. The minimum
+  // charge can grant early capacity, but cannot substitute for elapsed voice time here.
+  const nextObserved = Math.floor(attempts * 60_000 / budget.requests_per_minute) + 1;
+  const maximum = Number(session.funding_mode === 'ai-value' ? session.limit_ms : session.reserved_ms);
+  const delay = Math.max(1000, nextObserved - Number(session.observed_ms) + 1000);
+  const remaining = Math.min(session.deadline.getTime(), budget.expires_at.getTime()) - session.database_now.getTime();
+  // The delay is advisory: a later admission still rechecks authoritative observed
+  // time, budget and concurrency. It never grants time or reserves provider spend.
+  if (nextObserved > maximum || delay > 60_000 || delay >= remaining) return;
+  return delay;
 }
 interface ObservedResponse { id: string; usage: HostedHelperUsage }
 function observedResponse(raw: unknown): ObservedResponse {
