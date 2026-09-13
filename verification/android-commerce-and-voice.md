@@ -42,3 +42,9 @@ After the approved minimum-charge change, the complete API suite passed 238 test
 ## Guest beta decision
 
 The owner approved one free allowance per installation for the first public beta, accepting that a reinstall may claim another allowance. New grants must stay within the approved $25/day and $100 total funding commitments. Device Recall approval is no longer a prerequisite for this beta; actual cost accounting, installation proof and the enforced grant limits still require verification before public activation.
+
+## Deployment and limit review
+
+Commit `b0fbc88` was deployed on 13 September 2026 after an encrypted database backup. Additive migrations through 014 and the restricted database grants applied successfully. Public health and readiness checks returned 200; the database was healthy and both Google sign-in configurations remained available. Hosted voice, free trial admission, optional AI reporting and minute sales remain disabled. Their public routes still return the configured unavailable response.
+
+The owner requested an explanation of the limit experience before further funding changes. Per-entitlement funding implementation is paused, with no migration 015 or funding policy changes made. The intended rule is to stop new free grants at the campaign budget while preserving signup, purchases and previously issued minutes. The graceful no-free-offer response and its native onboarding path remain to be implemented. The current experimental lifetime voice cap and hardcoded signup capacity must be reviewed before public launch. This deployment does not establish that the intended public funding behavior is ready.

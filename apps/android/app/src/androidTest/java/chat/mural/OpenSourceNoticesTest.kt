@@ -1,5 +1,6 @@
 package chat.mural
 
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -19,17 +20,21 @@ class OpenSourceNoticesTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
     private var originalPreferences = Preferences()
+    private var preferencesCaptured = false
 
     @Before fun skipOnboarding() {
+        compose.awaitHistoryLoaded()
         compose.runOnIdle {
             val vm = ViewModelProvider(compose.activity)[MuralViewModel::class.java]
             originalPreferences = vm.archive.preferences.copy()
+            preferencesCaptured = true
             vm.updatePreferences(originalPreferences.copy(hasOnboarded = true))
         }
         compose.waitForIdle()
     }
 
     @After fun restorePreferences() {
+        if (!preferencesCaptured) return
         compose.runOnIdle { ViewModelProvider(compose.activity)[MuralViewModel::class.java].updatePreferences(originalPreferences) }
     }
 
@@ -38,8 +43,12 @@ class OpenSourceNoticesTest {
         compose.onNodeWithTag("tab-settings").performClick()
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasText(label))
         compose.onNode(hasText(label)).performClick()
-        for (file in listOf("THIRD-PARTY-NOTICES.txt", "Mural-LICENSE.txt", "Apache-2.0.txt", "WebRTC-SDK-LICENSE.txt", "WebRTC-THIRD-PARTY-NOTICES.md")) {
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodes(hasText("Nunito-OFL.txt")).fetchSemanticsNodes().isNotEmpty()
+        }
+        for (file in listOf("Nunito-OFL.txt", "THIRD-PARTY-NOTICES.txt", "Mural-LICENSE.txt", "Apache-2.0.txt", "WebRTC-SDK-LICENSE.txt", "WebRTC-THIRD-PARTY-NOTICES.md")) {
             compose.onNodeWithTag("notices-list").performScrollToNode(hasText(file))
+            compose.onNode(hasText(file)).assertIsDisplayed()
         }
     }
 }

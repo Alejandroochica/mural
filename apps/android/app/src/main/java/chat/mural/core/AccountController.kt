@@ -8,7 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
 enum class AccountNotice { UNAVAILABLE, SIGN_IN_AGAIN, INVALID_RESPONSE, SECURE_STORAGE, GOOGLE, BILLING_UNRESOLVED,
-    APPLE_DELETION, SIGNED_OUT_LOCALLY, DELETED }
+    APPLE_DELETION, SIGNED_OUT_LOCALLY, DELETED, SAME_ACCOUNT_REQUIRED }
 
 data class AccountState(
     val busy: Boolean = false,
@@ -42,15 +42,26 @@ class AccountController(
         mutable.value = mutable.value.copy(googleAvailable = api.providers().googleAndroid)
         session?.let { refreshAccount(it) }
     }
-    suspend fun signIn(getGoogleToken: suspend (nonce: String) -> String) = operation {
-        if (session != null) return@operation
+    suspend fun signIn(expectedAccountID: String? = null, getGoogleToken: suspend (nonce: String) -> String) = operation {
+        if (session?.isValid(now()) == true) {
+            if (expectedAccountID != null && session?.accountID != expectedAccountID) throw AccountFailure.Http(409, "same_account_required")
+            return@operation
+        }
+        if (session != null) {
+            storage.clear(); session = null
+            mutable.value = AccountState(busy = true, googleAvailable = mutable.value.googleAvailable)
+        }
         if (!api.providers().googleAndroid) throw AccountFailure.Unavailable
         val challenge = api.challenge()
         val deadline = now() + challenge.expiresInSeconds * 1000L
         val token = getGoogleToken(challenge.nonce)
         if (now() >= deadline) throw AccountFailure.Google
-        val exchanged = api.exchange(challenge, token)
+        val exchanged = api.exchange(challenge, token, expectedAccountID)
         val newSession = AccountSession(exchanged.accountID, exchanged.accessToken, now() + exchanged.expiresInSeconds * 1000L)
+        if (expectedAccountID != null && newSession.accountID != expectedAccountID) {
+            // A pending conversation can be recovered only by its original account. Never save another bearer.
+            throw AccountFailure.Http(409, "same_account_required")
+        }
         // Once the exchange succeeds, rotation must not leave a half-written local session.
         withContext(NonCancellable) {
             storage.save(newSession)
@@ -100,6 +111,7 @@ class AccountController(
                 is AccountFailure.Http -> when {
                     error.status == 401 -> AccountNotice.SIGN_IN_AGAIN
                     error.code == "unresolved_billing" -> AccountNotice.BILLING_UNRESOLVED
+                    error.code == "same_account_required" -> AccountNotice.SAME_ACCOUNT_REQUIRED
                     error.code == "apple_revocation_not_configured" -> AccountNotice.APPLE_DELETION
                     else -> AccountNotice.UNAVAILABLE
                 }

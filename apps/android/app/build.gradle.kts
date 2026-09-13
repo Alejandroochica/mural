@@ -11,6 +11,10 @@ val muralLocal = Properties().apply {
 }
 fun muralConfiguration(name: String): String = providers.gradleProperty(name).orNull ?: muralLocal.getProperty(name, "")
 fun buildString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "").replace("\r", "") + "\""
+val muralMinutePurchases = muralConfiguration("mural.minutePurchasesEnabled").ifBlank { "false" }
+val muralMinuteEnvironment = muralConfiguration("mural.minutePurchaseEnvironment").ifBlank { "test" }
+require(muralMinutePurchases in listOf("false", "true")) { "mural.minutePurchasesEnabled must be false or true" }
+require(muralMinuteEnvironment in listOf("test", "live")) { "mural.minutePurchaseEnvironment must be test or live" }
 android {
     namespace = "chat.mural"
     compileSdk = 36
@@ -23,6 +27,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "MANAGED_API_ORIGIN", buildString(muralConfiguration("mural.apiOrigin")))
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", buildString(muralConfiguration("mural.googleServerClientID")))
+        buildConfigField("boolean", "MINUTE_PURCHASES_ENABLED", muralMinutePurchases)
+        buildConfigField("String", "MINUTE_PURCHASE_ENVIRONMENT", buildString(muralMinuteEnvironment))
     }
     // A personal installation can preserve its local signing identity across SDK resets.
     // This file is ignored by Git; clean checkouts use Android's standard debug key.
@@ -36,6 +42,8 @@ android {
             matchingFallbacks += "debug"
             buildConfigField("String", "MANAGED_API_ORIGIN", "\"\"")
             buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"\"")
+            buildConfigField("boolean", "MINUTE_PURCHASES_ENABLED", "false")
+            buildConfigField("String", "MINUTE_PURCHASE_ENVIRONMENT", "\"test\"")
         }
     }
     testBuildType = "uiTest"
@@ -61,6 +69,7 @@ dependencies {
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
+    implementation("com.android.billingclient:billing:9.1.0")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

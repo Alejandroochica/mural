@@ -10,6 +10,8 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -28,6 +30,80 @@ class FinalAssessmentQueueTest {
         assertEquals(1, received)
         assertFalse(queue.isPending(session.id))
         queue.cancelAll()
+    }
+
+    @Test fun providerWaitsForTheDurableAttemptCheckpoint() = runTest {
+        val session = ended()
+        val checkpoint = CompletableDeferred<Boolean>()
+        var started = 0
+        val queue = FinalAssessmentQueue(backgroundScope) { snapshot, passage ->
+            started++
+            FinalAssessmentResult(snapshot.id, snapshot.languageID,
+                Assessment(passage.id, passage.revisionKey, Outcome.success, 1, "Next", "A word", emptyList()))
+        }
+        queue.beforeAssessment = { _, _ -> checkpoint.await() }
+        assertTrue(queue.submit(session)); runCurrent()
+        assertEquals(0, started)
+        checkpoint.complete(true); runCurrent()
+        assertEquals(1, started)
+        assertFalse(queue.isPending(session.id))
+    }
+
+    @Test fun failedOrCancelledCheckpointsNeverReachTheProvider() = runTest {
+        for (allow in listOf(false, true)) {
+            val session = ended()
+            val checkpoint = CompletableDeferred<Boolean>()
+            var started = 0
+            val queue = FinalAssessmentQueue(backgroundScope) { _, _ ->
+                started++
+                error("A cancelled or rejected checkpoint must not make a paid request")
+            }
+            queue.beforeAssessment = { _, _ -> checkpoint.await() }
+            queue.submit(session); runCurrent()
+            if (allow) queue.cancel(session.id)
+            checkpoint.complete(allow); runCurrent()
+            assertEquals(0, started)
+            assertFalse(queue.isPending(session.id))
+        }
+    }
+
+    @Test fun restartRecoversOnlyQueuedCurrentRevisionsAndKeepsAttemptCounts() {
+        val session = ended()
+        val now = session.endedAt!!
+        var tickets = FinalAssessmentRecovery.enqueue(session, emptyList())
+        assertEquals(listOf(session.id), FinalAssessmentRecovery.recover(listOf(session), tickets, now).map { it.id })
+        assertTrue(FinalAssessmentRecovery.recover(listOf(session), emptyList(), now).isEmpty())
+        tickets = tickets.map { it.copy(attempts = 1, lastAttemptAt = now) }
+        val restored = Json.decodeFromString<List<FinalAssessmentTicket>>(Json.encodeToString(tickets))
+        assertTrue(FinalAssessmentRecovery.recover(listOf(session), restored, now + 59).isEmpty())
+        assertEquals(1, FinalAssessmentRecovery.recover(listOf(session), restored, now + 60).size)
+        assertEquals(restored, FinalAssessmentRecovery.enqueue(session, restored))
+        session.correctFragment(session.fragments.single().id, "televisión")
+        assertTrue(FinalAssessmentRecovery.recover(listOf(session), restored, now + 61).isEmpty())
+        val corrected = FinalAssessmentRecovery.enqueue(session, restored)
+        assertEquals(1, corrected.size)
+        assertEquals(0, corrected.single().attempts)
+        assertNotEquals(restored.single().revisionKey, corrected.single().revisionKey)
+    }
+
+    @Test fun retriesAreBoundedByAttemptsAgeAndLaunchBatch() {
+        val records = (1..8).map { ended() }
+        val now = records.maxOf { it.endedAt!! }
+        val tickets = records.fold(emptyList<FinalAssessmentTicket>()) { list, record -> FinalAssessmentRecovery.enqueue(record, list) }
+        assertEquals(5, FinalAssessmentRecovery.recover(records, tickets, now).size)
+        assertTrue(FinalAssessmentRecovery.recover(records, tickets.map { it.copy(attempts = 3, lastAttemptAt = now - 500) }, now).isEmpty())
+        assertTrue(FinalAssessmentRecovery.recover(records, tickets, now + 8 * 24 * 3600).isEmpty())
+        assertTrue(FinalAssessmentRecovery.recover(records, tickets, now - 1).isEmpty())
+        assertTrue(FinalAssessmentRecovery.recover(emptyList(), tickets, now).isEmpty())
+    }
+
+    @Test fun completedAssessmentRemovesItsRetryTicket() {
+        val session = ended()
+        val tickets = FinalAssessmentRecovery.enqueue(session, emptyList())
+        val passage = session.passages.last()
+        session.assessments += Assessment(passage.id, passage.revisionKey, Outcome.success, 1, "Next", "A word", emptyList())
+        assertTrue(FinalAssessmentRecovery.enqueue(session, tickets).isEmpty())
+        assertTrue(FinalAssessmentRecovery.recover(listOf(session), tickets, session.endedAt!!).isEmpty())
     }
 
     private class Provider {

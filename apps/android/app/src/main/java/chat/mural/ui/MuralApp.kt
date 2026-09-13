@@ -3,6 +3,7 @@ package chat.mural.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.background
@@ -48,6 +49,7 @@ import chat.mural.MuralViewModel
 import chat.mural.R
 import chat.mural.core.CloudAction
 import chat.mural.AccountViewModel
+import chat.mural.MinutePurchaseViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,13 +64,19 @@ fun MuralApp(
     account: AccountViewModel? = null,
     onGoogleSignIn: () -> Unit = {},
     onSignOut: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
+    accountTransitionBusy: Boolean = false,
+    purchases: MinutePurchaseViewModel? = null,
+    onBuyMinutes: (String) -> Unit = {},
 ) {
+    val reportState by vm.reportState.collectAsStateWithLifecycle()
     val prefs = vm.archive.preferences
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showConsent by rememberSaveable { mutableStateOf(false) }
     var showAccount by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    BackHandler(enabled = tab != 0 && !showSettings && !showAccount) { tab = 0 }
+    var showMinutes by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = tab != 0 && !showSettings && !showAccount && !showMinutes) { tab = 0 }
     fun perform(action: CloudAction) {
         when (action) {
             CloudAction.StartVoice -> onRequestMicrophone()
@@ -88,7 +96,12 @@ fun MuralApp(
 
     MuralTheme {
         Surface(Modifier.fillMaxSize(), color = MuralColors.Cream) {
-            if (!prefs.hasOnboarded) {
+            if (vm.loadingHistory) {
+                Box(Modifier.fillMaxSize().testTag("history-loading"), contentAlignment = Alignment.Center) {
+                    SoftAnimatedBackground(Modifier.fillMaxSize())
+                    MuralOrb(modifier = Modifier.size(150.dp))
+                }
+            } else if (!prefs.hasOnboarded) {
                 OnboardingScreen(prefs.learningLanguageID, prefs.meaningLanguage) { language, meaning ->
                     vm.selectLanguage(language)
                     vm.updatePreferences(
@@ -155,7 +168,7 @@ fun MuralApp(
                             vm.pendingCloudAction = null; showConsent = true
                         }, onAccount = if (account?.configuration != null) ({
                             account.refresh(); showAccount = true
-                        }) else null)
+                        }) else null, onDismiss = { showSettings = false })
                     }
                 }
             }
@@ -174,10 +187,30 @@ fun MuralApp(
                 },
             )
 
-            if (showAccount && account?.configuration != null) {
+            if (showAccount && !showMinutes && account?.configuration != null) {
                 val accountState by account.state.collectAsStateWithLifecycle()
                 AccountSheet(accountState, onDismiss = { showAccount = false }, onSignIn = onGoogleSignIn,
-                    onSignOut = onSignOut, onDelete = account::delete, onRefresh = account::refresh)
+                    onSignOut = onSignOut, onDelete = onDeleteAccount, onRefresh = account::refresh,
+                    transitionBusy = accountTransitionBusy, provider = vm.conversationProvider,
+                    hostedAvailable = vm.hostedReadiness.enabled, conversationRunning = vm.isRunning,
+                    onSelectProvider = vm::selectConversationProvider,
+                    onBuyMinutes = if (purchases?.enabled == true) ({ purchases.refresh(); showMinutes = true }) else null)
+            }
+            if (showMinutes && purchases?.enabled == true && account != null) {
+                val purchaseState by purchases.state.collectAsStateWithLifecycle()
+                val accountState by account.state.collectAsStateWithLifecycle()
+                MinutePurchaseSheet(purchaseState, accountState.signedIn, onBuyMinutes,
+                    onSignIn = onGoogleSignIn, onRefresh = purchases::refresh,
+                    onDismiss = { showMinutes = false; account.refresh() },
+                    accountBusy = accountTransitionBusy || accountState.busy)
+            }
+
+            reportState.selection?.let { selected ->
+                androidx.compose.runtime.key(reportState.generation) {
+                    ReportConversationSheet(selected.excerpt, selected.languageID, reportState.available,
+                        reportState.delivery, vm::submitReport, vm::dismissReport,
+                        java.util.Locale.getDefault().language)
+                }
             }
 
             vm.error?.let { message ->

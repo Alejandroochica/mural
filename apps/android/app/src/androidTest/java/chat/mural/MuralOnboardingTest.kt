@@ -35,17 +35,21 @@ class MuralOnboardingTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
     private var originalPreferences = Preferences()
+    private var preferencesCaptured = false
 
     @Before fun preservePreferences() {
+        compose.awaitHistoryLoaded()
         compose.runOnIdle {
             val vm = ViewModelProvider(compose.activity)[MuralViewModel::class.java]
             originalPreferences = vm.archive.preferences.copy()
+            preferencesCaptured = true
             vm.updatePreferences(originalPreferences.copy(hasOnboarded = false, aiConsentVersion = null))
         }
         compose.waitForIdle()
     }
 
     @After fun restorePreferences() {
+        if (!preferencesCaptured) return
         compose.runOnIdle { ViewModelProvider(compose.activity)[MuralViewModel::class.java].updatePreferences(originalPreferences) }
     }
 
@@ -74,11 +78,16 @@ class MuralOnboardingTest {
 
         compose.onNodeWithTag("tab-settings").performClick()
         compose.onNodeWithTag("settings-screen").assertIsDisplayed()
-        compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("review-ai-consent"))
+        compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("settings-ai-permission"))
+        compose.onNodeWithTag("settings-ai-permission").performClick()
         compose.onNodeWithTag("review-ai-consent").performClick()
         compose.onNodeWithTag("ai-consent-title").assertIsDisplayed()
         compose.onNodeWithTag("ai-consent-agree").performClick()
+        compose.onNodeWithTag("settings-ai-permission").performClick()
         compose.onNodeWithTag("revoke-ai-consent").assertIsDisplayed()
+        compose.onNode(hasText(compose.activity.getString(R.string.common_close))).performClick()
+        compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("advanced-api-key"))
+        compose.onNodeWithTag("advanced-api-key").performClick()
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val keyButton = hasText(context.getString(R.string.settings_save_key)) or hasText(context.getString(R.string.settings_replace_key))

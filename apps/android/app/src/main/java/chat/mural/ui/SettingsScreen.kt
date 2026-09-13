@@ -1,11 +1,23 @@
 package chat.mural.ui
 
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,19 +26,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -36,14 +41,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -64,268 +67,208 @@ import chat.mural.core.UsageSummary
 
 @Composable
 fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Unit, onReviewConsent: () -> Unit,
-                   onAccount: (() -> Unit)? = null) {
-    var languageDialog by rememberSaveable { mutableStateOf(false) }
-    var meaningDialog by rememberSaveable { mutableStateOf(false) }
+                   onAccount: (() -> Unit)? = null, onDismiss: () -> Unit = {}) {
+    var advanced by rememberSaveable { mutableStateOf(false) }
     var keyDialog by rememberSaveable { mutableStateOf(false) }
     var deleteKey by rememberSaveable { mutableStateOf(false) }
     var deleteAll by rememberSaveable { mutableStateOf(false) }
+    var permissionDetails by rememberSaveable { mutableStateOf(false) }
     var revokeConsent by rememberSaveable { mutableStateOf(false) }
     var notices by rememberSaveable { mutableStateOf(false) }
+    var history by rememberSaveable { mutableStateOf(false) }
     var transcript by remember { mutableStateOf<SessionRecord?>(null) }
     var deleteSession by remember { mutableStateOf<SessionRecord?>(null) }
     val prefs = vm.archive.preferences
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val version = remember(context) { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() }
+    fun open(url: String) { runCatching { uriHandler.openUri(url) } }
 
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("settings-screen").padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item { PageHeading(stringResource(R.string.settings_eyebrow), stringResource(R.string.settings_title), stringResource(R.string.settings_subtitle), Modifier.padding(top = 20.dp)) }
-        if (onAccount != null) item {
-            SettingCard {
-                SettingRow(stringResource(R.string.account_title), stringResource(R.string.account_settings_detail)) { onAccount() }
-            }
-        }
-
-        item { SectionTitle(stringResource(R.string.settings_section_conversation)) }
-        item {
-            SettingCard {
-                SettingRow(stringResource(R.string.settings_learning_language), vm.language.settingsTitle, enabled = !vm.isRunning) { languageDialog = true }
-                HorizontalDivider(color = MuralColors.SurfaceBright)
-                Column(Modifier.padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.settings_conversation_limit), Modifier.weight(1f))
-                        Text(stringResource(R.string.settings_minutes_value, prefs.sessionMinutes), color = MuralColors.Secondary)
+    Column(Modifier.fillMaxSize()) {
+        SettingsSheetHeader(stringResource(R.string.settings_navigation_title), onDismiss)
+        LazyColumn(Modifier.weight(1f).testTag("settings-screen"), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            item {
+                SettingsGroup(stringResource(R.string.settings_just_your_pace),
+                    stringResource(if (vm.isRunning) R.string.settings_language_running_footer else R.string.settings_language_footer)) {
+                    SettingsChoiceRow(stringResource(R.string.settings_learning_language), vm.language.settingsTitle, vm.language.id,
+                        LanguageRegistry.all.map { it.id to it.settingsTitle }, "settings-learning-language", !vm.isRunning, vm::selectLanguage)
+                    SettingsDivider()
+                    SettingsMeaningSwitch(prefs.meaningVisible, vm::toggleMeaning)
+                    SettingsDivider()
+                    SettingsChoiceRow(stringResource(R.string.settings_meaning_language), prefs.meaningLanguage, prefs.meaningLanguage,
+                        MeaningLanguages.all.map { it to it }, "settings-meaning-language", !vm.isRunning) {
+                        vm.updatePreferences(prefs.copy(meaningLanguage = it))
                     }
-                    Slider(
-                        value = prefs.sessionMinutes.toFloat(),
-                        onValueChange = { vm.updatePreferences(prefs.copy(sessionMinutes = it.toInt().coerceIn(1, 60))) },
-                        valueRange = 1f..60f,
-                        steps = 58,
-                        enabled = !vm.isRunning,
-                    )
-                }
-                HorizontalDivider(color = MuralColors.SurfaceBright)
-                SettingRow(stringResource(R.string.settings_meaning_language), prefs.meaningLanguage, enabled = !vm.isRunning) { meaningDialog = true }
-                HorizontalDivider(color = MuralColors.SurfaceBright)
-                ValueRow(stringResource(R.string.settings_corrections_label), stringResource(R.string.settings_corrections_value))
-            }
-        }
-        item {
-            MuralTextField(
-                prefs.interests,
-                { vm.updatePreferences(prefs.copy(interests = it.take(500))) },
-                Modifier.fillMaxWidth(),
-                enabled = !vm.isRunning,
-                minLines = 2,
-                maxLines = 5,
-                label = { Text(stringResource(R.string.settings_interests_label)) },
-                supportingText = { Text(stringResource(R.string.settings_interests_support)) },
-            )
-        }
-
-        item { SectionTitle(stringResource(R.string.settings_section_openai_account)) }
-        item {
-            SettingCard {
-                Text(
-                    stringResource(if (vm.hasKey) R.string.settings_key_saved_notice else R.string.settings_key_missing_notice),
-                    color = MuralColors.Secondary,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-                Button(onClick = { keyDialog = true }, enabled = !vm.isRunning, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(if (vm.hasKey) R.string.settings_replace_key else R.string.settings_save_key))
-                }
-                LinkRow(stringResource(R.string.settings_open_api_keys)) { uriHandler.openUri("https://platform.openai.com/api-keys") }
-                if (vm.hasKey) MuralTextButton(onClick = { deleteKey = true }, enabled = !vm.isRunning, modifier = Modifier.align(Alignment.End)) {
-                    Text(stringResource(R.string.settings_remove_key), color = MuralColors.Red)
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_corrections_label), stringResource(R.string.settings_corrections_value))
+                    SettingsDivider()
+                    BasicTextField(value = prefs.interests, onValueChange = { vm.updatePreferences(prefs.copy(interests = it.take(500))) },
+                        enabled = !vm.isRunning, textStyle = MaterialTheme.typography.bodyLarge.copy(color = MuralColors.Ink),
+                        cursorBrush = SolidColor(MuralColors.Secondary), minLines = 1, maxLines = 4,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 14.dp)
+                            .testTag("settings-interests"), decorationBox = { field ->
+                            if (prefs.interests.isEmpty()) Text(stringResource(R.string.settings_interests_label),
+                                style = MaterialTheme.typography.bodyLarge, color = MuralColors.Secondary.copy(alpha = .7f))
+                            field()
+                        })
                 }
             }
-        }
-
-        item { SectionTitle(stringResource(R.string.settings_section_usage)) }
-        item {
-            val usage = UsageSummary.of(vm.archive.sessions)
-            SettingCard {
-                ValueRow(stringResource(R.string.settings_voice_time_label), usage.voiceTime)
-                ValueRow(stringResource(R.string.settings_voice_estimate_label), usage.voiceEstimate)
-                ValueRow(stringResource(R.string.settings_search_calls_label), usage.searchCalls.toString())
-                LinkRow(stringResource(R.string.settings_usage_billing_link)) { uriHandler.openUri("https://platform.openai.com/usage") }
-                Text(
-                    stringResource(R.string.settings_usage_footer),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MuralColors.Secondary,
-                )
-            }
-        }
-
-        item { SectionTitle(stringResource(R.string.settings_section_ai_permission)) }
-        item {
-            SettingCard {
-                Text(
-                    stringResource(if (prefs.aiConsentVersion == AI_CONSENT_VERSION) R.string.settings_ai_consent_accepted else R.string.settings_ai_consent_not_accepted),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    stringResource(R.string.settings_ai_permission_summary),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MuralColors.Secondary,
-                )
-                if (prefs.aiConsentVersion == AI_CONSENT_VERSION) {
-                    MuralTextButton(onClick = { revokeConsent = true }, enabled = !vm.isRunning, modifier = Modifier.testTag("revoke-ai-consent")) {
-                        Text(stringResource(R.string.settings_revoke_consent_button), color = MuralColors.Red)
-                    }
-                } else {
-                    OutlinedButton(onClick = onReviewConsent, enabled = !vm.isRunning, modifier = Modifier.fillMaxWidth().testTag("review-ai-consent")) {
-                        Text(stringResource(R.string.settings_review_consent_button))
-                    }
+            if (onAccount != null) item {
+                SettingsGroup {
+                    SettingsRow(stringResource(R.string.account_title), enabled = !vm.isRunning, symbol = SettingsSymbol.ACCOUNT,
+                        chevron = true, modifier = Modifier.testTag("managed-account-settings"), onClick = onAccount)
                 }
             }
-        }
-
-        item { SectionTitle(stringResource(R.string.history_section_title)) }
-        if (vm.archive.sessions.isEmpty()) item {
-            SettingCard { Text(stringResource(R.string.history_empty), color = MuralColors.Secondary, modifier = Modifier.padding(vertical = 8.dp)) }
-        } else items(vm.archive.sessions.sortedByDescending { it.startedAt }, key = { it.id }) { session ->
-            Surface(shape = RoundedCornerShape(20.dp), color = MuralColors.Surface) {
-                Column(Modifier.clickable { transcript = session }.padding(17.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(session.title, style = MaterialTheme.typography.titleMedium)
-                            Text("${LanguageRegistry.get(session.languageID)?.name ?: session.languageID} · ${formatDate(session.startedAt)}", style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+            item {
+                SettingsGroup(stringResource(R.string.settings_advanced),
+                    if (!vm.hasKey) stringResource(R.string.settings_byok_version_footer) else null) {
+                    SettingsRow(stringResource(R.string.settings_use_own_key), symbol = SettingsSymbol.KEY,
+                        chevron = !advanced, modifier = Modifier.testTag("advanced-api-key"), onClick = { advanced = !advanced })
+                    AnimatedVisibility(advanced, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                        Column {
+                            SettingsDivider()
+                            if (vm.hasKey) Text(stringResource(R.string.settings_key_saved_notice), style = MaterialTheme.typography.bodySmall,
+                                color = MuralColors.Secondary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                            SettingsRow(stringResource(if (vm.hasKey) R.string.settings_replace_key else R.string.settings_save_key),
+                                enabled = !vm.isRunning, tint = MuralColors.Secondary, chevron = true, onClick = { keyDialog = true })
+                            SettingsDivider()
+                            SettingsRow(stringResource(R.string.settings_open_api_keys), tint = MuralColors.Secondary,
+                                onClick = { open("https://platform.openai.com/api-keys") })
+                            if (vm.hasKey) {
+                                SettingsDivider()
+                                SettingsRow(stringResource(R.string.settings_remove_key), enabled = !vm.isRunning,
+                                    tint = MuralColors.Red, onClick = { deleteKey = true })
+                            }
+                            Text(stringResource(R.string.settings_key_owner_footer), style = MaterialTheme.typography.bodySmall,
+                                color = MuralColors.Secondary, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp))
                         }
-                        Text("›", style = MaterialTheme.typography.headlineMedium)
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        MuralTextButton(onClick = { deleteSession = session }) { Text(stringResource(R.string.common_delete), color = MuralColors.Red) }
                     }
                 }
             }
-        }
-
-        item { SectionTitle(stringResource(R.string.settings_section_your_data)) }
-        item {
-            SettingCard {
-                OutlinedButton(onClick = onExport, enabled = !vm.isRunning, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.settings_export_backup)) }
-                OutlinedButton(onClick = onImport, enabled = !vm.isRunning, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.settings_import_backup)) }
-                Text(
-                    stringResource(R.string.settings_backup_footer),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MuralColors.Secondary,
-                )
-                MuralTextButton(onClick = { deleteAll = true }, enabled = !vm.isRunning) { Text(stringResource(R.string.settings_delete_all_data), color = MuralColors.Red) }
+            item {
+                val usage = UsageSummary.of(vm.archive.sessions)
+                SettingsGroup(stringResource(R.string.settings_keep_comfortable), stringResource(R.string.settings_usage_footer)) {
+                    val limits = (listOf(5, 10, 15, 20, 30, 60) + prefs.sessionMinutes).distinct().sorted()
+                    SettingsChoiceRow(stringResource(R.string.settings_conversation_limit), stringResource(R.string.settings_limit_minutes, prefs.sessionMinutes),
+                        prefs.sessionMinutes.toString(), limits.map { it.toString() to stringResource(R.string.settings_limit_minutes, it) },
+                        "settings-conversation-limit", !vm.isRunning) { vm.updatePreferences(prefs.copy(sessionMinutes = it.toInt())) }
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_voice_time_label), usage.voiceTime)
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_voice_estimate_label), usage.voiceEstimate)
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_search_calls_label), usage.searchCalls.toString())
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_usage_billing_link), tint = MuralColors.Secondary,
+                        onClick = { open("https://platform.openai.com/usage") })
+                }
             }
-        }
-
-        item { SectionTitle(stringResource(R.string.settings_section_help_privacy)) }
-        item {
-            SettingCard {
-                LinkRow(stringResource(R.string.common_privacy_policy)) { uriHandler.openUri("https://mural.chat/privacy/") }
-                LinkRow(stringResource(R.string.common_terms_of_use)) { uriHandler.openUri("https://mural.chat/terms/") }
-                LinkRow(stringResource(R.string.common_contact_support)) { uriHandler.openUri("https://mural.chat/support/") }
-                LinkRow(stringResource(R.string.settings_openai_data_controls)) { uriHandler.openUri("https://developers.openai.com/api/docs/guides/your-data") }
-                Text(stringResource(R.string.settings_data_use_footer), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
-                SettingRow(stringResource(R.string.settings_open_source_notices), "") { notices = true }
+            item {
+                SettingsGroup(stringResource(R.string.settings_section_your_data), stringResource(R.string.settings_backup_footer)) {
+                    SettingsRow(stringResource(R.string.settings_export_backup), enabled = !vm.isRunning, symbol = SettingsSymbol.EXPORT,
+                        tint = MuralColors.Secondary, onClick = onExport)
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_import_backup), enabled = !vm.isRunning, symbol = SettingsSymbol.IMPORT,
+                        tint = MuralColors.Secondary, onClick = onImport)
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.history_section_title), symbol = SettingsSymbol.HISTORY, chevron = true,
+                        modifier = Modifier.testTag("settings-history"), onClick = { history = true })
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_delete_all_data), enabled = !vm.isRunning,
+                        tint = MuralColors.Red, onClick = { deleteAll = true })
+                }
             }
-        }
-        item {
-            val context = LocalContext.current
-            val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
-            Column(Modifier.padding(bottom = 28.dp)) {
-                Text(stringResource(R.string.settings_app_version_footer, version), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
-                Text(stringResource(R.string.settings_models_footer), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+            item {
+                SettingsGroup(stringResource(R.string.settings_section_help_privacy)) {
+                    SettingsRow(stringResource(R.string.common_privacy_policy), tint = MuralColors.Secondary,
+                        onClick = { open("https://mural.chat/privacy/") })
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.common_terms_of_use), tint = MuralColors.Secondary,
+                        onClick = { open("https://mural.chat/terms/") })
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.common_contact_support), tint = MuralColors.Secondary,
+                        onClick = { open("https://mural.chat/support/") })
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_section_ai_permission), chevron = true,
+                        modifier = Modifier.testTag("settings-ai-permission"), onClick = { permissionDetails = true })
+                }
+            }
+            item {
+                SettingsGroup {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(stringResource(R.string.settings_app_version_footer, version), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+                        Text(stringResource(R.string.settings_models_footer), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
+                    }
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_openai_data_controls), tint = MuralColors.Secondary,
+                        onClick = { open("https://developers.openai.com/api/docs/guides/your-data") })
+                    Text(stringResource(R.string.settings_data_use_footer), style = MaterialTheme.typography.bodySmall,
+                        color = MuralColors.Secondary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                    SettingsDivider()
+                    SettingsRow(stringResource(R.string.settings_open_source_notices), chevron = true, onClick = { notices = true })
+                }
             }
         }
     }
 
-    if (languageDialog) SelectionDialog(
-        title = stringResource(R.string.settings_learning_language),
-        options = LanguageRegistry.all.map { it.id to it.settingsTitle },
-        selected = vm.language.id,
-        onSelect = { vm.selectLanguage(it); languageDialog = false },
-        onDismiss = { languageDialog = false },
-    )
-    if (meaningDialog) SelectionDialog(
-        title = stringResource(R.string.settings_meaning_language),
-        options = MeaningLanguages.all.map { it to it },
-        selected = prefs.meaningLanguage,
-        onSelect = { vm.updatePreferences(prefs.copy(meaningLanguage = it)); meaningDialog = false },
-        onDismiss = { meaningDialog = false },
-    )
     if (keyDialog) KeyDialog(vm, onDismiss = { keyDialog = false })
     if (notices) NoticesDialog(onDismiss = { notices = false })
+    if (history) SettingsHistorySheet(vm, onDismiss = { history = false }, onSelect = { transcript = it }, onDelete = { deleteSession = it })
+    if (permissionDetails) AlertDialog(onDismissRequest = { permissionDetails = false },
+        title = { Text(stringResource(R.string.settings_section_ai_permission)) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(stringResource(if (prefs.aiConsentVersion == AI_CONSENT_VERSION) R.string.settings_ai_consent_accepted else R.string.settings_ai_consent_not_accepted),
+                style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.settings_ai_permission_summary), color = MuralColors.Secondary)
+        } },
+        confirmButton = {
+            if (prefs.aiConsentVersion == AI_CONSENT_VERSION) MuralTextButton(onClick = { permissionDetails = false; revokeConsent = true },
+                enabled = !vm.isRunning, modifier = Modifier.testTag("revoke-ai-consent")) {
+                Text(stringResource(R.string.settings_revoke_consent_button), color = MuralColors.Red)
+            } else MuralTextButton(onClick = { permissionDetails = false; onReviewConsent() },
+                enabled = !vm.isRunning, modifier = Modifier.testTag("review-ai-consent")) { Text(stringResource(R.string.settings_review_consent_button)) }
+        }, dismissButton = { MuralTextButton(onClick = { permissionDetails = false }) { Text(stringResource(R.string.common_close)) } })
     if (deleteKey) ConfirmDialog(stringResource(R.string.settings_delete_key_confirm_title), stringResource(R.string.settings_delete_key_confirm_message), stringResource(R.string.common_delete), {
         vm.deleteKey(); deleteKey = false
     }, { deleteKey = false })
     if (deleteAll) ConfirmDialog(stringResource(R.string.settings_delete_all_confirm_title), stringResource(R.string.settings_delete_all_confirm_message), stringResource(R.string.settings_delete_all_confirm_button), {
         vm.deleteLearningData(); deleteAll = false
     }, { deleteAll = false })
-    if (revokeConsent) ConfirmDialog(
-        stringResource(R.string.settings_revoke_consent_confirm_title),
-        stringResource(R.string.settings_revoke_consent_confirm_message),
-        stringResource(R.string.settings_revoke_consent_button),
-        {
-            vm.updatePreferences(vm.archive.preferences.copy(aiConsentVersion = null))
-            revokeConsent = false
-        },
-        { revokeConsent = false },
-    )
+    if (revokeConsent) ConfirmDialog(stringResource(R.string.settings_revoke_consent_confirm_title),
+        stringResource(R.string.settings_revoke_consent_confirm_message), stringResource(R.string.settings_revoke_consent_button), {
+            vm.updatePreferences(vm.archive.preferences.copy(aiConsentVersion = null)); revokeConsent = false
+        }, { revokeConsent = false })
     deleteSession?.let { session -> ConfirmDialog(stringResource(R.string.history_delete_session_confirm_title), session.title, stringResource(R.string.common_delete), {
         vm.deleteSession(session.id); deleteSession = null
     }, { deleteSession = null }) }
     transcript?.let { TranscriptDialog(vm, it, onDismiss = { transcript = null }) }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SectionTitle(title: String) {
-    Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, color = MuralColors.Secondary, modifier = Modifier.padding(top = 10.dp).semantics { heading() })
-}
-
-@Composable
-private fun SettingCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = RoundedCornerShape(22.dp), color = MuralColors.Surface) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
-    }
-}
-
-@Composable
-private fun SettingRow(title: String, value: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(title, Modifier.weight(1f), color = if (enabled) MuralColors.Ink else MuralColors.Secondary)
-        Text("$value  ›", color = MuralColors.Secondary)
-    }
-}
-
-@Composable
-private fun ValueRow(title: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        Text(title, Modifier.weight(1f))
-        Text(value, color = MuralColors.Secondary)
-    }
-}
-
-@Composable
-private fun LinkRow(title: String, onClick: () -> Unit) {
-    Text("$title  ↗", color = MuralColors.Orange, modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp))
-}
-
-@Composable
-private fun SelectionDialog(title: String, options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(28.dp), color = MuralColors.Surface) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(8.dp))
-                options.forEach { (id, label) ->
-                    Surface(
-                        Modifier.fillMaxWidth().clickable { onSelect(id) },
-                        shape = RoundedCornerShape(15.dp),
-                        color = if (id == selected) MuralColors.SurfaceBright else Color.Transparent,
-                    ) { Text((if (id == selected) "✓  " else "    ") + label, Modifier.padding(14.dp)) }
+private fun SettingsHistorySheet(vm: MuralViewModel, onDismiss: () -> Unit, onSelect: (SessionRecord) -> Unit, onDelete: (SessionRecord) -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MuralColors.Cream,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxHeight(.9f)) {
+            SettingsSheetHeader(stringResource(R.string.history_section_title), onDismiss)
+            LazyColumn(Modifier.weight(1f).testTag("settings-history-list"), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (vm.archive.sessions.isEmpty()) item {
+                    Text(stringResource(R.string.history_empty), style = MaterialTheme.typography.bodyLarge, color = MuralColors.Secondary,
+                        modifier = Modifier.padding(16.dp))
                 }
-                MuralTextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text(stringResource(R.string.common_cancel)) }
+                items(vm.archive.sessions.sortedByDescending { it.startedAt }, key = { it.id }) { session ->
+                    SettingsGroup {
+                        Column(Modifier.fillMaxWidth().clickable { onSelect(session) }.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(session.title, style = MaterialTheme.typography.titleMedium)
+                            Text("${LanguageRegistry.get(session.languageID)?.name ?: session.languageID} · ${formatDate(session.startedAt)}",
+                                color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                        SettingsDivider()
+                        SettingsRow(stringResource(R.string.common_delete), enabled = !vm.isRunning, tint = MuralColors.Red, onClick = { onDelete(session) })
+                    }
+                }
             }
         }
     }
@@ -397,7 +340,16 @@ fun TranscriptDialog(vm: MuralViewModel, session: SessionRecord, onDismiss: () -
                         ).padding(15.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        Text(stringResource(if (passage.speaker == Speaker.user) R.string.history_speaker_you else R.string.history_speaker_mural), style = MaterialTheme.typography.labelSmall, color = MuralColors.Secondary)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(if (passage.speaker == Speaker.user) R.string.history_speaker_you else R.string.history_speaker_mural),
+                                style = MaterialTheme.typography.labelSmall, color = MuralColors.Secondary, modifier = Modifier.weight(1f))
+                            if (passage.speaker == Speaker.assistant && passage.text.isNotBlank()) {
+                                ReportUtteranceAction(onClick = {
+                                    vm.reportUtterance(liveSession.id, passage.id)
+                                    onDismiss()
+                                }, modifier = Modifier.testTag("report-history-${passage.id}"))
+                            }
+                        }
                         Text(passage.text)
                         if (passage.speaker == Speaker.user) MuralTextButton(onClick = { correcting = passage }) { Text(stringResource(R.string.history_edit_passage_button)) }
                     }

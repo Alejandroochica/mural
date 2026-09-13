@@ -21,21 +21,28 @@ import androidx.compose.ui.unit.dp
 import chat.mural.R
 import chat.mural.core.AccountNotice
 import chat.mural.core.AccountState
+import chat.mural.core.ConversationProvider
 import java.text.NumberFormat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Unit,
-                 onSignOut: () -> Unit, onDelete: () -> Unit, onRefresh: () -> Unit) {
+                 onSignOut: () -> Unit, onDelete: () -> Unit, onRefresh: () -> Unit,
+                 transitionBusy: Boolean = false,
+                 provider: ConversationProvider = ConversationProvider.PERSONAL_KEY,
+                 hostedAvailable: Boolean = false, conversationRunning: Boolean = false,
+                 onSelectProvider: (ConversationProvider) -> Unit = {},
+                 onBuyMinutes: (() -> Unit)? = null) {
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     val uri = LocalUriHandler.current
+    val busy = state.busy || transitionBusy
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MuralColors.Cream,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(bottom = 24.dp)
             .testTag("account-sheet"), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            MuralOrb(modifier = Modifier.size(112.dp), energy = if (state.busy) .12f else 0f)
+            MuralOrb(modifier = Modifier.size(112.dp), energy = if (busy) .12f else 0f)
             Text(stringResource(if (state.signedIn) R.string.account_welcome_back else R.string.account_welcome),
                 style = MaterialTheme.typography.headlineLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             Text(state.email ?: stringResource(if (state.signedIn) R.string.account_connected else R.string.account_intro),
@@ -46,26 +53,47 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
                         Text(stringResource(R.string.account_time_label), style = MaterialTheme.typography.labelLarge)
                         val milliseconds = state.minutes?.availableMilliseconds
                         Text(if (milliseconds == null) stringResource(R.string.account_time_unavailable) else
-                            stringResource(R.string.account_minutes_value, NumberFormat.getNumberInstance().apply {
-                                maximumFractionDigits = 1; roundingMode = java.math.RoundingMode.DOWN
-                            }.format(milliseconds / 60_000.0)), style = MaterialTheme.typography.headlineMedium,
+                            stringResource(if (milliseconds in 1 until 60_000) R.string.account_seconds_value else R.string.account_minutes_value,
+                                NumberFormat.getNumberInstance().apply {
+                                    maximumFractionDigits = if (milliseconds in 1 until 60_000) 0 else 1
+                                    roundingMode = java.math.RoundingMode.DOWN
+                                }.format(if (milliseconds in 1 until 60_000) kotlin.math.ceil(milliseconds / 1000.0) else milliseconds / 60_000.0)),
+                            style = MaterialTheme.typography.headlineMedium,
                             modifier = Modifier.testTag("account-minute-balance"))
+                        onBuyMinutes?.let { buy ->
+                            Button(onClick = buy, enabled = !busy, modifier = Modifier.fillMaxWidth().testTag("account-buy-minutes"),
+                                colors = ButtonDefaults.buttonColors(containerColor = MuralColors.Ink, contentColor = MuralColors.Cream)) {
+                                Text(stringResource(R.string.account_add_minutes))
+                            }
+                        }
+                    }
+                }
+                if (hostedAvailable || provider == ConversationProvider.HOSTED_MINUTES) {
+                    SettingsGroup(title = stringResource(R.string.account_conversation_source),
+                        footer = if (provider == ConversationProvider.HOSTED_MINUTES) stringResource(R.string.hosted_minimum_charge_disclosure) else null) {
+                        SettingsChoiceRow(title = stringResource(R.string.account_use),
+                            value = stringResource(if (provider == ConversationProvider.HOSTED_MINUTES) R.string.account_mural_minutes else R.string.account_personal_key),
+                            selected = provider.name, options = listOf(
+                                ConversationProvider.PERSONAL_KEY.name to stringResource(R.string.account_personal_key),
+                                ConversationProvider.HOSTED_MINUTES.name to stringResource(R.string.account_mural_minutes)),
+                            tag = "account-conversation-source", enabled = !busy && !conversationRunning,
+                            onSelect = { onSelectProvider(ConversationProvider.valueOf(it)) })
                     }
                 }
                 Text(stringResource(R.string.account_local_data), style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
             } else {
-                val enabled = !state.busy && state.googleAvailable
+                val enabled = !busy && state.googleAvailable
                 Image(painterResource(R.drawable.google_sign_in), stringResource(R.string.account_google),
                     Modifier.width(260.dp).height(62.dp).alpha(if (enabled) 1f else .45f)
                         .clickable(enabled = enabled, role = Role.Button, onClick = onSignIn).testTag("account-google"))
-                if (!state.busy && !state.googleAvailable) Text(stringResource(R.string.account_not_ready),
+                if (!busy && !state.googleAvailable) Text(stringResource(R.string.account_not_ready),
                     style = MaterialTheme.typography.bodyMedium, color = MuralColors.Secondary)
                 Text(stringResource(R.string.account_agreement), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary)
             }
-            if (state.busy) CircularProgressIndicator(Modifier.size(22.dp), color = MuralColors.Ink, strokeWidth = 2.dp)
+            if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = MuralColors.Ink, strokeWidth = 2.dp)
             state.notice?.let { Text(stringResource(it.textResource()), color = MuralColors.Secondary,
                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("account-notice")) }
-            if (!state.busy) {
+            if (!busy) {
                 if (state.signedIn) {
                     OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.account_sign_out))
@@ -84,11 +112,11 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
     }
     if (confirmSignOut) AlertDialog(onDismissRequest = { confirmSignOut = false },
         title = { Text(stringResource(R.string.account_sign_out)) }, text = { Text(stringResource(R.string.account_sign_out_detail)) },
-        confirmButton = { MuralTextButton(onClick = { confirmSignOut = false; onSignOut() }, enabled = !state.busy) { Text(stringResource(R.string.account_sign_out)) } },
+        confirmButton = { MuralTextButton(onClick = { confirmSignOut = false; onSignOut() }, enabled = !busy) { Text(stringResource(R.string.account_sign_out)) } },
         dismissButton = { MuralTextButton(onClick = { confirmSignOut = false }) { Text(stringResource(R.string.common_cancel)) } })
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
         title = { Text(stringResource(R.string.account_delete)) }, text = { Text(stringResource(R.string.account_delete_detail)) },
-        confirmButton = { MuralTextButton(onClick = { confirmDelete = false; onDelete() }, enabled = !state.busy,
+        confirmButton = { MuralTextButton(onClick = { confirmDelete = false; onDelete() }, enabled = !busy,
             modifier = Modifier.testTag("account-confirm-delete")) { Text(stringResource(R.string.account_delete), color = MuralColors.Red) } },
         dismissButton = { MuralTextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.common_cancel)) } })
 }
@@ -103,4 +131,5 @@ private fun AccountNotice.textResource() = when (this) {
     AccountNotice.APPLE_DELETION -> R.string.account_error_apple
     AccountNotice.SIGNED_OUT_LOCALLY -> R.string.account_signed_out_locally
     AccountNotice.DELETED -> R.string.account_deleted
+    AccountNotice.SAME_ACCOUNT_REQUIRED -> R.string.account_same_account_required
 }

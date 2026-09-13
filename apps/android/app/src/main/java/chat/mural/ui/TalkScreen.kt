@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -73,7 +74,8 @@ fun TalkScreen(
     var lookup by rememberSaveable { mutableStateOf(false) }
     var lookupWord by rememberSaveable { mutableStateOf("") }
     var transcript by remember { mutableStateOf<SessionRecord?>(null) }
-    val passage = vm.session?.passages?.lastOrNull { it.speaker == Speaker.assistant }?.text
+    val assistantPassage = vm.session?.passages?.lastOrNull { it.speaker == Speaker.assistant }
+    val passage = assistantPassage?.text
     val caption = passage?.takeIf { it.isNotBlank() } ?: vm.language.greeting
     val busy = vm.state == "connecting" || vm.state == "closing"
 
@@ -101,8 +103,17 @@ fun TalkScreen(
             active = vm.state != "closing",
             modifier = Modifier.size(orbSize),
         )
-        Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary,
-            modifier = Modifier.padding(top = 12.dp).testTag("conversation-status"))
+        Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
+            Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession), style = MaterialTheme.typography.bodySmall,
+                color = MuralColors.Secondary, modifier = Modifier.testTag("conversation-status"))
+            if (assistantPassage != null && passage?.isNotBlank() == true) {
+                Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
+                    ReportUtteranceAction(onClick = {
+                        vm.session?.id?.let { vm.reportUtterance(it, assistantPassage.id) }
+                    }, modifier = Modifier.requiredSize(40.dp).testTag("report-current-utterance"))
+                }
+            }
+        }
         Spacer(Modifier.height(20.dp))
         Column(
             modifier = (if (scrollPage) Modifier else Modifier.weight(1.3f).verticalScroll(rememberScrollState()))

@@ -19,15 +19,19 @@ import java.io.File
 class DesignReviewTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private var original = Preferences()
+    private var preferencesCaptured = false
     @Before fun prepare() {
+        compose.awaitHistoryLoaded()
         compose.runOnIdle {
             val vm = ViewModelProvider(compose.activity)[MuralViewModel::class.java]
             original = vm.archive.preferences.copy()
+            preferencesCaptured = true
             vm.updatePreferences(original.copy(learningLanguageID = "es", meaningLanguage = "English", hasOnboarded = false, aiConsentVersion = null))
         }
         compose.waitForIdle()
     }
     @After fun restore() {
+        if (!preferencesCaptured) return
         compose.runOnIdle { ViewModelProvider(compose.activity)[MuralViewModel::class.java].updatePreferences(original) }
     }
     private fun capture(name: String) {

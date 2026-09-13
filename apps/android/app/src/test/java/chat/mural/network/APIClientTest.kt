@@ -71,4 +71,17 @@ class APIClientTest {
         server.enqueue(MockResponse().setBody(" ".repeat(1_048_577)))
         try { api.post("responses",buildJsonObject{}); fail("large response accepted") } catch (_: APIClient.APIException.InvalidResponse) { }
     }
+    @Test fun providerInterfaceKeepsByokVoiceModelAndTransportPayload() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"session":{"id":"provider-live"},"transport":{"type":"webrtc","sdp":"v=0\\r\\n"}}"""))
+        val provider: LiveSessionProvider = api
+        val result = provider.createLiveSession(LiveSessionRequest("v=0", "Teaching policy", language = "es-ES"))
+        val request = server.takeRequest(); val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("/v1/live/sessions", request.path)
+        assertEquals("Bearer sk-fake-test-only", request.getHeader("Authorization"))
+        assertEquals("gpt-live-1", body["session"]!!.jsonObject["model"]!!.jsonPrimitive.content)
+        assertEquals(JsonPrimitive(false), body["session"]!!.jsonObject["store"])
+        assertEquals(JsonPrimitive("Teaching policy"), body["session"]!!.jsonObject["instructions"])
+        assertEquals("provider-live", result.providerSessionID); assertNull(result.lease)
+        assertNull(body["language"])
+    }
 }

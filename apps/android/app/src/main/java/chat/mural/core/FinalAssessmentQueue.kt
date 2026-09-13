@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 
 data class FinalAssessmentResult(
     val sessionID: String, val languageID: String, val assessment: Assessment,
@@ -34,7 +35,9 @@ class FinalAssessmentQueue(
     private val clock: () -> Long = System::currentTimeMillis,
     private val assess: suspend (SessionRecord, Passage) -> FinalAssessmentResult,
 ) {
-    var onResult: ((FinalAssessmentResult) -> Unit)? = null
+    var onResult: (suspend (FinalAssessmentResult) -> Unit)? = null
+    /** Must commit the retry count and transcript before a provider request can start. */
+    var beforeAssessment: (suspend (SessionRecord, Passage) -> Boolean)? = null
     private val timeoutMillis = timeoutMillis.coerceIn(1, 15_000)
     private class Pending(val token: Any, val deadline: Long, val request: Job, val timer: Job)
     private val jobs = mutableMapOf<String, Pending>()
@@ -48,6 +51,11 @@ class FinalAssessmentQueue(
         val deadline = clock() + timeoutMillis
         val request = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                if (beforeAssessment?.invoke(snapshot, passage) == false) {
+                    if (jobs[snapshot.id]?.token === token) jobs.remove(snapshot.id)?.timer?.cancel()
+                    return@launch
+                }
+                if (jobs[snapshot.id]?.token !== token || clock() > deadline) return@launch
                 val result = assess(snapshot, passage)
                 if (jobs[snapshot.id]?.token !== token) return@launch
                 jobs.remove(snapshot.id)?.timer?.cancel()
@@ -76,4 +84,58 @@ class FinalAssessmentQueue(
     }
 
     fun cancelAll() = jobs.keys.toList().forEach(::cancel)
+}
+
+/** Local retry metadata. It contains no transcript, credentials or provider response. */
+@Serializable
+data class FinalAssessmentTicket(
+    val sessionID: String,
+    val passageID: String,
+    val revisionKey: String,
+    val attempts: Int = 0,
+    val lastAttemptAt: Double? = null,
+) {
+    fun matches(session: SessionRecord, passage: Passage): Boolean =
+        sessionID == session.id && passageID == passage.id && revisionKey == passage.revisionKey
+}
+
+/** Retries only explicitly queued work; importing an archive does not trigger cloud requests. */
+object FinalAssessmentRecovery {
+    const val MAX_ATTEMPTS = 3
+    const val MAX_RECOVERED_PER_LAUNCH = 5
+    private const val MAX_AGE_SECONDS = 7 * 24 * 60 * 60.0
+
+    fun passage(session: SessionRecord): Passage? {
+        if (session.endedAt == null) return null
+        val passage = session.passages.lastOrNull { it.speaker == Speaker.user } ?: return null
+        return passage.takeIf { it.text.length >= 3 && session.assessments.none { assessment ->
+            assessment.passageID == it.id && assessment.revisionKey == it.revisionKey
+        } }
+    }
+
+    fun enqueue(session: SessionRecord, tickets: List<FinalAssessmentTicket>): List<FinalAssessmentTicket> {
+        val passage = passage(session)
+        val existing = tickets.firstOrNull { it.sessionID == session.id }
+        if (passage != null && existing?.matches(session, passage) == true) return tickets
+        return tickets.filterNot { it.sessionID == session.id } +
+            listOfNotNull(passage?.let { FinalAssessmentTicket(session.id, it.id, it.revisionKey) })
+    }
+
+    fun canAttempt(ticket: FinalAssessmentTicket, session: SessionRecord, now: Double): Boolean {
+        val passage = passage(session) ?: return false
+        val endedAt = session.endedAt ?: return false
+        if (!ticket.matches(session, passage) || ticket.attempts !in 0 until MAX_ATTEMPTS ||
+            !now.isFinite() || now - endedAt !in 0.0..MAX_AGE_SECONDS) return false
+        val last = ticket.lastAttemptAt ?: return ticket.attempts == 0
+        if (!last.isFinite() || ticket.attempts == 0) return false
+        val retryDelay = 60.0 * (1 shl (ticket.attempts - 1))
+        return now - last >= retryDelay
+    }
+
+    fun recover(sessions: List<SessionRecord>, tickets: List<FinalAssessmentTicket>, now: Double): List<SessionRecord> {
+        val byID = sessions.associateBy { it.id }
+        return tickets.mapNotNull { ticket -> byID[ticket.sessionID]?.takeIf { canAttempt(ticket, it, now) } }
+            .sortedByDescending { it.endedAt }
+            .take(MAX_RECOVERED_PER_LAUNCH)
+    }
 }

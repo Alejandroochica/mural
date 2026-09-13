@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -13,11 +14,15 @@ import android.os.Looper
 import chat.mural.R
 import java.nio.ByteBuffer
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -64,6 +69,8 @@ class LiveTransport(
     private val audioManager = applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val generation = AtomicLong(0)
     private val lock = Any()
+    private val retiredAttempts = ArrayDeque<Attempt>()
+    private val audioScope = CoroutineScope(SupervisorJob() + AUDIO_DISPATCHER)
 
     @Volatile private var activeAttempt: Attempt? = null
     @Volatile private var startedState = false
@@ -73,22 +80,26 @@ class LiveTransport(
     val isMuted: Boolean get() = mutedState
 
     suspend fun connect(
-        api: APIClient,
+        api: LiveSessionProvider,
         instructions: String,
         history: JsonArray = JsonArray(emptyList()),
-    ) {
-        disconnect()
+        language: String? = null,
+    ) = withContext(AUDIO_DISPATCHER) {
+        val attemptGeneration = detachAttempt()
+        drainRetiredAttempts()
+        emitZeroLevels(attemptGeneration)
         if (applicationContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             throw microphoneException()
         }
 
         val attempt = Attempt(
-            id = generation.incrementAndGet(),
+            id = attemptGeneration,
+            ownership = LiveSessionOwnership(audioScope),
             previousAudioMode = audioManager.mode,
             previousSpeakerphone = if (Build.VERSION.SDK_INT < 31) legacySpeakerphoneState() else false,
-            previousCommunicationDevice = if (Build.VERSION.SDK_INT >= 31) audioManager.communicationDevice else null,
         )
         synchronized(lock) {
+            if (generation.get() != attemptGeneration) throw CancellationException("Voice connection superseded")
             activeAttempt = attempt
             startedState = false
             mutedState = false
@@ -109,37 +120,14 @@ class LiveTransport(
             requireCurrent(attempt)
 
             val sdp = attempt.peer?.localDescription?.description ?: throw connectionException()
-            val result = api.post(
-                "live/sessions",
-                buildJsonObject {
-                    put("session", buildJsonObject {
-                        put("model", "gpt-live-1")
-                        put("instructions", instructions)
-                        put("input", history)
-                        put("store", false)
-                        put("delegation", buildJsonObject { put("type", "client") })
-                        put("audio", buildJsonObject {
-                            put("output", buildJsonObject { put("voice", "marin") })
-                        })
-                    })
-                    put("transport", buildJsonObject {
-                        put("type", "webrtc")
-                        put("sdp", sdp)
-                    })
-                },
-            )
+            val result = api.createLiveSession(LiveSessionRequest(sdp, instructions, history, language))
+            attempt.ownership.adopt(result.lease)
             requireCurrent(attempt)
-
-            val transport = result["transport"] as? JsonObject ?: throw connectionException()
-            if ((transport["type"] as? JsonPrimitive)?.contentOrNull != "webrtc") {
-                throw connectionException()
-            }
-            val answer = (transport["sdp"] as? JsonPrimitive)?.contentOrNull
-                ?: throw connectionException()
-            (result["session"] as? JsonObject)?.let { session ->
+            val answer = result.sdp
+            result.providerSessionID?.let { id ->
                 emitEvent(attempt, buildJsonObject {
                     put("type", "mural.session.created")
-                    put("session", session)
+                    put("session", buildJsonObject { put("id", id) })
                 })
             }
             withTimeout(SDP_TIMEOUT_MILLISECONDS) {
@@ -149,7 +137,7 @@ class LiveTransport(
             requireCurrent(attempt)
             startMetering(attempt)
             attempt.scopeCompletion = scope.coroutineContext[Job]?.invokeOnCompletion {
-                cleanupIfCurrent(attempt)
+                audioScope.launch { cleanupIfCurrent(attempt) }
             }
         } catch (_: TimeoutCancellationException) {
             cleanupIfCurrent(attempt)
@@ -163,52 +151,83 @@ class LiveTransport(
         }
     }
 
+    /** True means accepted for delivery; every native operation runs on the audio worker. */
     fun send(event: JsonObject): Boolean {
         val attempt = activeAttempt ?: return false
+        if (!isCurrent(attempt) || !attempt.channelOpen.get()) return false
+        audioScope.launch {
+            if (isCurrent(attempt) && !sendNow(attempt, event) && !attempt.closing.get()) {
+                fail(attempt, applicationContext.getString(R.string.error_transport_channel_closed))
+            }
+        }
+        return true
+    }
+
+    private fun sendNow(attempt: Attempt, event: JsonObject): Boolean {
         if (!isCurrent(attempt)) return false
         val channel = attempt.channel ?: return false
-        if (channel.state() != DataChannel.State.OPEN) return false
         return try {
-            channel.send(DataChannel.Buffer(ByteBuffer.wrap(event.toString().toByteArray(Charsets.UTF_8)), false))
-        } catch (_: Exception) {
-            false
-        }
+            channel.state() == DataChannel.State.OPEN &&
+                channel.send(DataChannel.Buffer(ByteBuffer.wrap(event.toString().toByteArray(Charsets.UTF_8)), false))
+        } catch (_: Exception) { false }
     }
 
     fun mute(muted: Boolean) {
+        val attempt = activeAttempt ?: return
         mutedState = muted
-        try { activeAttempt?.takeIf(::isCurrent)?.track?.setEnabled(!muted) } catch (_: Exception) { }
-        send(buildJsonObject {
-            put("type", if (muted) "session.input_audio.mute" else "session.input_audio.unmute")
-            put("event_id", UUID.randomUUID().toString())
-        })
+        audioScope.launch {
+            if (!isCurrent(attempt)) return@launch
+            try { attempt.track?.setEnabled(!muted) } catch (_: Exception) { }
+            sendNow(attempt, buildJsonObject {
+                put("type", if (muted) "session.input_audio.mute" else "session.input_audio.unmute")
+                put("event_id", UUID.randomUUID().toString())
+            })
+        }
     }
 
     fun close() {
         val attempt = activeAttempt ?: return
         attempt.closing.set(true)
+        attempt.ownership.close()
         mutedState = true
-        try { attempt.track?.setEnabled(false) } catch (_: Exception) { }
-        send(buildJsonObject {
-            put("type", "session.close")
-            put("event_id", UUID.randomUUID().toString())
-        })
+        audioScope.launch {
+            if (!isCurrent(attempt)) return@launch
+            try { attempt.track?.setEnabled(false) } catch (_: Exception) { }
+            sendNow(attempt, buildJsonObject {
+                put("type", "session.close")
+                put("event_id", UUID.randomUUID().toString())
+            })
+        }
     }
 
     fun disconnect() {
-        val attempt = synchronized(lock) {
-            val nextGeneration = generation.incrementAndGet()
-            activeAttempt.also {
-                activeAttempt = null
-                startedState = false
-                mutedState = false
-            } to nextGeneration
+        val detached = detachAttempt()
+        // This scope outlives the ViewModel so clearing the screen cannot cancel native cleanup.
+        audioScope.launch { drainRetiredAttempts() }
+        emitZeroLevels(detached)
+    }
+
+    private fun detachAttempt(): Long = synchronized(lock) {
+        activeAttempt?.let(retiredAttempts::addLast)
+        activeAttempt = null
+        startedState = false
+        mutedState = false
+        generation.incrementAndGet()
+    }
+
+    private fun drainRetiredAttempts() {
+        // A restart may reach the worker before a previously posted cleanup task. Drain all
+        // retired attempts before the replacement reads or changes any process audio state.
+        while (true) {
+            val retired = synchronized(lock) { retiredAttempts.removeFirstOrNull() } ?: break
+            cleanup(retired)
         }
-        cleanup(attempt.first)
-        emitZeroLevels(attempt.second)
     }
 
     private fun createPeer(attempt: Attempt) {
+        attempt.networkRecovery = VoiceConnectionRecovery(audioScope) {
+            fail(attempt, applicationContext.getString(R.string.error_transport_network_lost))
+        }
         val audioDeviceModule = JavaAudioDeviceModule.builder(applicationContext)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
@@ -294,8 +313,15 @@ class LiveTransport(
         }
 
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-            if (state == PeerConnection.PeerConnectionState.FAILED) {
-                fail(attempt, applicationContext.getString(R.string.error_transport_network_lost))
+            audioScope.launch {
+                if (!isCurrent(attempt)) return@launch
+                when (state) {
+                    PeerConnection.PeerConnectionState.DISCONNECTED -> attempt.networkRecovery?.disconnected()
+                    PeerConnection.PeerConnectionState.CONNECTED -> attempt.networkRecovery?.connected()
+                    PeerConnection.PeerConnectionState.FAILED ->
+                        fail(attempt, applicationContext.getString(R.string.error_transport_network_lost))
+                    else -> Unit
+                }
             }
         }
     }
@@ -304,9 +330,13 @@ class LiveTransport(
         override fun onBufferedAmountChange(previousAmount: Long) = Unit
 
         override fun onStateChange() {
-            val state = try { attempt.channel?.state() } catch (_: Exception) { null }
-            if (state == DataChannel.State.CLOSED && !attempt.closing.get()) {
-                fail(attempt, applicationContext.getString(R.string.error_transport_channel_closed))
+            audioScope.launch {
+                if (!isCurrent(attempt)) return@launch
+                val state = try { attempt.channel?.state() } catch (_: Exception) { null }
+                attempt.channelOpen.set(state == DataChannel.State.OPEN)
+                if (state == DataChannel.State.CLOSED && !attempt.closing.get()) {
+                    fail(attempt, applicationContext.getString(R.string.error_transport_channel_closed))
+                }
             }
         }
 
@@ -327,6 +357,8 @@ class LiveTransport(
             val type = event.string("type") ?: return
             if (!isCurrent(attempt) || !event.isSafeForCoordinator(type)) return
             if (type == "session.started") {
+                // The first event can reach the UI before the queued OPEN callback runs.
+                attempt.channelOpen.set(true)
                 startedState = true
                 attempt.started.complete(Unit)
             }
@@ -377,7 +409,7 @@ class LiveTransport(
 
     private fun startMetering(attempt: Attempt) {
         attempt.meterJob?.cancel()
-        attempt.meterJob = scope.launch {
+        attempt.meterJob = audioScope.launch {
             var lastInput = 0.0
             var lastOutput = 0.0
             while (isActive && isCurrent(attempt)) {
@@ -400,6 +432,11 @@ class LiveTransport(
     }
 
     private fun configureAudio(attempt: Attempt) {
+        // Do not claim an in-progress call or a legacy SCO connection owned by another app.
+        if (attempt.previousAudioMode != AudioManager.MODE_NORMAL || audioManager.mode != AudioManager.MODE_NORMAL ||
+            (Build.VERSION.SDK_INT < 31 && LegacyCommunicationAudioRoute.hasExistingSco(applicationContext, audioManager))) {
+            throw audioFocusException()
+        }
         val attributes = voiceAudioAttributes()
         lateinit var focusRequest: AudioFocusRequest
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
@@ -407,6 +444,7 @@ class LiveTransport(
                 change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
                 change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
             ) {
+                attempt.focusLost.set(true)
                 fail(attempt, applicationContext.getString(R.string.error_transport_audio_interrupted))
             }
         }
@@ -421,16 +459,39 @@ class LiveTransport(
         }
         attempt.ownsAudioFocus = true
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        routeCommunicationAudio()
+        attempt.ownsAudioMode = true
+        if (Build.VERSION.SDK_INT < 31) {
+            val legacyRoute = LegacyCommunicationAudioRoute(applicationContext, audioManager, audioScope,
+                attempt.previousSpeakerphone, onFailure = { audioFailure(attempt) })
+            attempt.legacyAudioRoute = legacyRoute
+            legacyRoute.start()
+        }
+        routeCommunicationAudio(attempt)
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = reroute()
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = reroute()
+            private fun reroute() {
+                audioScope.launch {
+                    if (isCurrent(attempt)) {
+                        try { routeCommunicationAudio(attempt) }
+                        catch (_: Exception) { audioFailure(attempt) }
+                    }
+                }
+            }
+        }
+        attempt.deviceCallback = callback
+        audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
     }
 
     private fun fail(attempt: Attempt, message: String) {
         if (!isCurrent(attempt) || attempt.closing.get() || !attempt.failureReported.compareAndSet(false, true)) return
         // WebRTC callbacks can run on its native signaling/audio threads. Disposing
         // a peer there can deadlock while joining the very thread delivering failure.
-        scope.launch {
+        audioScope.launch {
             val failureGeneration = cleanupIfCurrent(attempt) ?: return@launch
-            if (generation.get() == failureGeneration && activeAttempt == null) onFailure?.invoke(message)
+            scope.launch {
+                if (generation.get() == failureGeneration && activeAttempt == null) onFailure?.invoke(message)
+            }
         }
     }
 
@@ -443,39 +504,38 @@ class LiveTransport(
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
         .build()
 
-    private fun routeCommunicationAudio() {
+    private fun routeCommunicationAudio(attempt: Attempt) {
         if (Build.VERSION.SDK_INT >= 31) {
-            selectCommunicationDevice(audioManager.communicationDevice, audioManager.availableCommunicationDevices) { it.type }
-                ?.let { audioManager.setCommunicationDevice(it) }
-        } else {
-            setLegacySpeakerphone(true)
-        }
+            val current = audioManager.communicationDevice
+            val selected = selectCommunicationDevice(current, audioManager.availableCommunicationDevices,
+                sameDevice = { left, right -> left.id == right.id }) { it.type }
+            if (selected != null && current?.id != selected.id && audioManager.setCommunicationDevice(selected)) {
+                attempt.ownsCommunicationRoute = true
+            }
+        } else attempt.legacyAudioRoute?.devicesChanged()
     }
 
-    private fun restoreAudioRoute(attempt: Attempt) {
+    private fun releaseAudioRoute(attempt: Attempt) {
         try {
             if (Build.VERSION.SDK_INT >= 31) {
-                audioManager.clearCommunicationDevice()
-                attempt.previousCommunicationDevice?.let { audioManager.setCommunicationDevice(it) }
-            } else {
-                setLegacySpeakerphone(attempt.previousSpeakerphone)
-            }
+                // clearCommunicationDevice releases this caller's selection. Re-selecting a
+                // previously observed global device would create a new, lingering request.
+                if (attempt.ownsCommunicationRoute) audioManager.clearCommunicationDevice()
+            } else attempt.legacyAudioRoute?.close(restoreSpeakerphone = !attempt.focusLost.get())
         } catch (_: Exception) { }
+        attempt.ownsCommunicationRoute = false
+        attempt.legacyAudioRoute = null
     }
 
     @Suppress("DEPRECATION")
     private fun legacySpeakerphoneState(): Boolean = audioManager.isSpeakerphoneOn
-
-    @Suppress("DEPRECATION")
-    private fun setLegacySpeakerphone(enabled: Boolean) {
-        audioManager.isSpeakerphoneOn = enabled
-    }
 
     private fun cleanupIfCurrent(attempt: Attempt): Long? {
         val cleanupGeneration = synchronized(lock) {
             if (activeAttempt !== attempt) null
             else {
                 val nextGeneration = generation.incrementAndGet()
+                retiredAttempts.addLast(attempt)
                 activeAttempt = null
                 startedState = false
                 mutedState = false
@@ -483,7 +543,7 @@ class LiveTransport(
             }
         }
         if (cleanupGeneration != null) {
-            cleanup(attempt)
+            drainRetiredAttempts()
             emitZeroLevels(cleanupGeneration)
         }
         return cleanupGeneration
@@ -491,7 +551,13 @@ class LiveTransport(
 
     private fun cleanup(attempt: Attempt?) {
         if (attempt == null || !attempt.cleaned.compareAndSet(false, true)) return
+        attempt.ownership.close()
         attempt.closing.set(true)
+        attempt.channelOpen.set(false)
+        attempt.networkRecovery?.connected()
+        attempt.networkRecovery = null
+        try { attempt.deviceCallback?.let { audioManager.unregisterAudioDeviceCallback(it) } } catch (_: Exception) { }
+        attempt.deviceCallback = null
         attempt.scopeCompletion?.dispose()
         attempt.scopeCompletion = null
         attempt.meterJob?.cancel()
@@ -508,12 +574,17 @@ class LiveTransport(
         try { attempt.source?.dispose() } catch (_: Exception) { }
         try { attempt.factory?.dispose() } catch (_: Exception) { }
         try { attempt.audioDeviceModule?.release() } catch (_: Exception) { }
+        releaseAudioRoute(attempt)
+        if (attempt.ownsAudioMode) {
+            // MODE_NORMAL removes this process's mode request; Android restores another
+            // caller's request itself. Reapplying its observed mode would claim ownership.
+            try { audioManager.mode = AudioManager.MODE_NORMAL } catch (_: Exception) { }
+            attempt.ownsAudioMode = false
+        }
         if (attempt.ownsAudioFocus) {
             try { attempt.focusRequest?.let { audioManager.abandonAudioFocusRequest(it) } } catch (_: Exception) { }
             attempt.ownsAudioFocus = false
         }
-        restoreAudioRoute(attempt)
-        try { audioManager.mode = attempt.previousAudioMode } catch (_: Exception) { }
     }
 
     private fun emitEvent(attempt: Attempt, event: JsonObject) {
@@ -555,12 +626,18 @@ class LiveTransport(
 
     private class Attempt(
         val id: Long,
+        val ownership: LiveSessionOwnership,
         val previousAudioMode: Int,
         val previousSpeakerphone: Boolean,
-        val previousCommunicationDevice: AudioDeviceInfo?,
     ) {
+        var networkRecovery: VoiceConnectionRecovery? = null
+        var deviceCallback: AudioDeviceCallback? = null
         var focusRequest: AudioFocusRequest? = null
         var ownsAudioFocus = false
+        var ownsAudioMode = false
+        var ownsCommunicationRoute = false
+        var legacyAudioRoute: LegacyCommunicationAudioRoute? = null
+        val focusLost = AtomicBoolean(false)
         var audioDeviceModule: AudioDeviceModule? = null
         var factory: PeerConnectionFactory? = null
         var peer: PeerConnection? = null
@@ -571,6 +648,7 @@ class LiveTransport(
         var scopeCompletion: DisposableHandle? = null
         val iceComplete = CompletableDeferred<Unit>()
         val started = CompletableDeferred<Unit>()
+        val channelOpen = AtomicBoolean(false)
         val closing = AtomicBoolean(false)
         val failureReported = AtomicBoolean(false)
         val cleaned = AtomicBoolean(false)
@@ -589,6 +667,11 @@ class LiveTransport(
     private fun audioFocusException() = TransportException.AudioFocus(applicationContext.getString(R.string.error_transport_audio_focus))
 
     companion object {
+        // WebRTC creation, route changes and disposal can block while joining native threads.
+        // A single worker also prevents disposal racing a send, mute or stats request.
+        private val AUDIO_DISPATCHER = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "mural-audio-control").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
         private const val ICE_TIMEOUT_MILLISECONDS = 10_000L
         private const val SDP_TIMEOUT_MILLISECONDS = 10_000L
         private const val READY_TIMEOUT_MILLISECONDS = 20_000L
@@ -626,3 +709,23 @@ private fun kotlinx.serialization.json.JsonElement?.isAbsentOrPrimitive(): Boole
 
 private fun kotlinx.serialization.json.JsonElement?.isAbsentOrString(): Boolean =
     this == null || (this as? JsonPrimitive)?.isString == true
+
+/** Allows a brief Wi-Fi/mobile handoff; an unrecovered connection cannot stay active forever. */
+internal class VoiceConnectionRecovery(
+    private val scope: CoroutineScope,
+    private val timeoutMillis: Long = 8_000,
+    private val onLost: () -> Unit,
+) {
+    private var timer: Job? = null
+    fun disconnected() {
+        if (timer != null) return
+        timer = scope.launch {
+            delay(timeoutMillis)
+            onLost()
+        }
+    }
+    fun connected() {
+        timer?.cancel()
+        timer = null
+    }
+}

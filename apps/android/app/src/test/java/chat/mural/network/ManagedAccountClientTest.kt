@@ -47,6 +47,16 @@ class ManagedAccountClientTest {
         try { api.profile(session); fail("followed redirect") } catch (error: AccountFailure.Http) { assertEquals(307, error.status) }
         assertEquals(1, server.requestCount)
     }
+    @Test fun recoveryBindsTheExpectedOwnerBeforeTheServerCanIssueAnotherAccountToken() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"same_account_required"}}"""))
+        try {
+            api.exchange(AccountChallenge(id, "b".repeat(64), 300), "synthetic-google-token", id)
+            fail("accepted another account")
+        } catch (failure: AccountFailure.Http) { assertEquals("same_account_required", failure.code) }
+        val request = server.takeRequest()
+        assertEquals(id, Json.parseToJsonElement(request.body.readUtf8()).jsonObject["expectedAccountID"]!!.jsonPrimitive.content)
+        assertNull(request.getHeader("Authorization")); assertEquals(1, server.requestCount)
+    }
     @Test fun malformedOrOversizedResponseAndCrossAccountProfileAreRejected() = runBlocking {
         for (body in listOf("not-json", " ".repeat(65_537),
             """{"accountID":"87654321-1234-1234-1234-123456789012","email":null,"providers":["google"],"createdAt":"2026-09-13"}""")) {

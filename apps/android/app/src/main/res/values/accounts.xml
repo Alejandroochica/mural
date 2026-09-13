@@ -16,6 +16,12 @@
     <string name="account_time_label">Time for a conversation</string>
     <string name="account_time_unavailable">Not available yet</string>
     <string name="account_minutes_value">%1$s minutes</string>
+    <string name="account_seconds_value">%1$s sec</string>
+    <string name="account_add_minutes">Add minutes</string>
+    <string name="account_conversation_source">Your conversations</string>
+    <string name="account_use">Use</string>
+    <string name="account_mural_minutes">Mural minutes</string>
+    <string name="account_personal_key">Your API key</string>
     <string name="account_local_data">Your learning history stays on this device. Export it in Settings to move it to another phone.</string>
     <string name="account_not_ready">Sign-in is not available right now. You can keep using Mural without an account.</string>
     <string name="account_sign_out">Sign out</string>
@@ -34,4 +40,5 @@
     <string name="account_error_apple">This account is linked to Apple. Delete it from Mural on your iPhone, or contact hi@hackmamba.io for help.</string>
     <string name="account_signed_out_locally">You’re signed out on this device. We couldn’t reach Mural to end your other sessions.</string>
     <string name="account_deleted">Your account has been deleted.</string>
+    <string name="account_same_account_required">Sign in with the same account to finish your previous conversation.</string>
 </resources>

@@ -35,10 +35,11 @@ class ManagedAccountClient internal constructor(private val origin: HttpUrl, tra
 
     override suspend fun providers(): AccountProviders = decode(request("GET", "auth/providers"))
     override suspend fun challenge(): AccountChallenge = decode(request("POST", "auth/challenge"))
-    override suspend fun exchange(challenge: AccountChallenge, idToken: String): AccountExchange {
+    override suspend fun exchange(challenge: AccountChallenge, idToken: String, expectedAccountID: String?): AccountExchange {
         if (idToken.isBlank() || idToken.length > 16_384) throw AccountFailure.Google
         return decode(request("POST", "auth/exchange", body = buildJsonObject {
             put("provider", "google"); put("challengeID", challenge.challengeID); put("idToken", idToken)
+            expectedAccountID?.let { put("expectedAccountID", it) }
         }))
     }
     override suspend fun profile(session: AccountSession): AccountProfile = decode<AccountProfile>(request("GET", "account", session)).also {

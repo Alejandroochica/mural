@@ -4,13 +4,41 @@ import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import chat.mural.core.AccountSession
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccountSessionStoreTest {
+    @Test fun concurrentViewModelsCannotMixEncryptedRecordsOrEraseARefreshedLogin() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals("chat.mural.android.uitest", context.packageName)
+        val origin = "https://account.example.test/"
+        val stores = List(5) { AccountSessionStore(context, origin) }
+        val sessions = List(48) { index -> AccountSession("12345678-1234-1234-1234-123456789012",
+            ('a' + index % 26).toString().repeat(43), System.currentTimeMillis() + 80_000_000 + index) }
+        try {
+            stores.first().save(sessions.first())
+            val start = CompletableDeferred<Unit>()
+            val writer = launch(Dispatchers.Default) {
+                start.await()
+                for (session in sessions) { stores.first().save(session); yield() }
+            }
+            val readers = stores.drop(1).map { store -> launch(Dispatchers.Default) {
+                start.await()
+                repeat(64) {
+                    assertTrue("A concurrent read lost or corrupted the saved account", store.read() in sessions)
+                    yield()
+                }
+            } }
+            start.complete(Unit)
+            writer.join(); readers.joinAll()
+            stores.forEach { assertEquals(sessions.last(), it.read()) }
+            stores.last().clear()
+            stores.forEach { assertNull(it.read()) }
+        } finally { withContext(NonCancellable) { stores.first().clear() } }
+    }
     @Test fun bearerSurvivesRecreationButCannotBeReadFromAnotherOriginAndClearsIndependentlyOfOpenAIKey() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("chat.mural.android.uitest", context.packageName)

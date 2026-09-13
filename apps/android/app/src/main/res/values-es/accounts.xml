@@ -16,6 +16,12 @@
     <string name="account_time_label">Tiempo para conversar</string>
     <string name="account_time_unavailable">Aún no disponible</string>
     <string name="account_minutes_value">%1$s minutos</string>
+    <string name="account_seconds_value">%1$s s</string>
+    <string name="account_add_minutes">Añadir minutos</string>
+    <string name="account_conversation_source">Tus conversaciones</string>
+    <string name="account_use">Usar</string>
+    <string name="account_mural_minutes">Minutos de Mural</string>
+    <string name="account_personal_key">Tu clave API</string>
     <string name="account_local_data">Tu historial de aprendizaje se queda en este dispositivo. Expórtalo desde Ajustes para pasarlo a otro teléfono.</string>
     <string name="account_not_ready">El inicio de sesión no está disponible ahora. Puedes seguir usando Mural sin cuenta.</string>
     <string name="account_sign_out">Cerrar sesión</string>
@@ -34,4 +40,5 @@
     <string name="account_error_apple">Esta cuenta está vinculada a Apple. Elimínala desde Mural en tu iPhone o escribe a hi@hackmamba.io.</string>
     <string name="account_signed_out_locally">Has cerrado sesión en este dispositivo. No hemos podido conectar con Mural para cerrar tus otras sesiones.</string>
     <string name="account_deleted">Tu cuenta se ha eliminado.</string>
+    <string name="account_same_account_required">Inicia sesión con la misma cuenta para terminar tu conversación anterior.</string>
 </resources>

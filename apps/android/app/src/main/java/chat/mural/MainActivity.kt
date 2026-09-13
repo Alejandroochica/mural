@@ -21,12 +21,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import chat.mural.core.ArchiveCodec
 import chat.mural.ui.MuralApp
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import androidx.credentials.CredentialManager
@@ -41,6 +43,8 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 class MainActivity : ComponentActivity() {
     private val vm: MuralViewModel by viewModels()
     private val account: AccountViewModel by viewModels()
+    private val purchases: MinutePurchaseViewModel by viewModels()
+    private val changingAccount get() = account.transitionBusy.value
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,7 +52,16 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
         )
+        purchases.bindAccountState(account.state, account.transitionBusy)
+        lifecycleScope.launch {
+            combine(account.state, account.transitionBusy) { state, changing -> state.copy(busy = state.busy || changing) }
+                .collect { state -> purchases.onAccountChanged(state); vm.onAccountChanged(state) }
+        }
+        lifecycleScope.launch {
+            purchases.balanceChanges.collect { account.refresh(); vm.refreshHostedReadiness() }
+        }
         setContent {
+            val accountTransitionBusy by account.transitionBusy.collectAsStateWithLifecycle()
             var microphoneMessage by rememberSaveable { mutableStateOf<String?>(null) }
             var microphonePermanentlyDenied by rememberSaveable { mutableStateOf(false) }
             var requestedMicrophone by rememberSaveable { mutableStateOf(false) }
@@ -106,17 +119,29 @@ class MainActivity : ComponentActivity() {
                 onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                 account = account,
                 onGoogleSignIn = ::signInWithGoogle,
-                onSignOut = account::signOut,
+                onSignOut = { changeAccount(delete = false) },
+                onDeleteAccount = { changeAccount(delete = true) },
+                accountTransitionBusy = accountTransitionBusy,
+                purchases = purchases,
+                onBuyMinutes = { sku -> if (!changingAccount) purchases.launch(this@MainActivity, sku) },
             )
         }
     }
 
     private fun signInWithGoogle() {
         val config = account.configuration ?: return
+        val ticket = account.beginSignInTransition() ?: return
+        synchronizeAccountState()
         // Credential Manager receives the current Activity only for this lifecycle-bound call.
         // Rotation cancels the chooser; no Activity or provider token is retained in the ViewModel.
         lifecycleScope.launch {
-            account.signIn { nonce ->
+            try {
+            // An expired owner must be able to renew its token before its held conversation can settle.
+            // AccountController rejects a different Google account before saving its bearer.
+            val pendingOwner = vm.pendingHostedOwnerAccountID
+            account.refreshAndWait()
+            if (pendingOwner == null && !vm.prepareForAccountChange()) return@launch
+            account.signIn(expectedAccountID = pendingOwner) { nonce ->
                 try {
                     val option = GetSignInWithGoogleOption.Builder(config.googleServerClientID).setNonce(nonce).build()
                     val result = CredentialManager.create(this@MainActivity).getCredential(this@MainActivity,
@@ -129,7 +154,30 @@ class MainActivity : ComponentActivity() {
                 catch (error: CancellationException) { throw error }
                 catch (_: Exception) { throw AccountFailure.Google }
             }
+            if (pendingOwner != null && account.state.value.accountID == pendingOwner) vm.prepareForAccountChange()
+            vm.refreshHostedReadiness()
+            } finally { account.endSignInTransition(ticket); synchronizeAccountState() }
         }
+    }
+
+    private fun changeAccount(delete: Boolean) {
+        if (changingAccount || account.state.value.busy) return
+        val conversation = vm
+        account.changeAccount(delete, conversation::prepareForAccountChange, conversation::refreshHostedReadiness)
+        synchronizeAccountState()
+    }
+
+    private fun synchronizeAccountState() {
+        val state = account.state.value.copy(busy = account.state.value.busy || changingAccount)
+        purchases.onAccountChanged(state)
+        vm.onAccountChanged(state)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        account.refresh()
+        purchases.onForeground(account.state.value.copy(busy = account.state.value.busy || changingAccount))
+        vm.refreshHostedReadiness()
     }
 
     override fun onStop() {

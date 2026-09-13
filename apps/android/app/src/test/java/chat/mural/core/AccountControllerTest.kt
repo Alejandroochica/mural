@@ -22,16 +22,18 @@ class AccountControllerTest {
         var profileFailure: AccountFailure? = null
         var deletionFailure: AccountFailure? = null
         var signOutFailure: AccountFailure? = null
+        var signOuts = 0
         override suspend fun providers() = AccountProviders(available)
         override suspend fun challenge() = AccountChallenge(id, "b".repeat(64), 300)
-        override suspend fun exchange(challenge: AccountChallenge, idToken: String): AccountExchange {
+        override suspend fun exchange(challenge: AccountChallenge, idToken: String, expectedAccountID: String?): AccountExchange {
+            if (expectedAccountID != null && expectedAccountID != id) throw AccountFailure.Http(409, "same_account_required")
             exchanges++; return AccountExchange(id, validSession.accessToken, 86_400)
         }
         override suspend fun profile(session: AccountSession): AccountProfile {
             profileFailure?.let { throw it }; return AccountProfile(id, "me@example.test", listOf("google"), "2026-09-13")
         }
         override suspend fun minutes(session: AccountSession) = MinuteBalance("milliseconds", "connected-conversation-time", 581_234, 60_000, 521_234)
-        override suspend fun signOut(session: AccountSession) { signOutFailure?.let { throw it } }
+        override suspend fun signOut(session: AccountSession) { signOuts++; signOutFailure?.let { throw it } }
         override suspend fun delete(session: AccountSession) { deletionFailure?.let { throw it } }
     }
     @Test fun signInPreservesExactServerBalanceAndStoresNoProviderToken() = runTest {
@@ -47,6 +49,15 @@ class AccountControllerTest {
         val store = Store().apply { value = validSession.copy(expiresAtMilliseconds = timestamp) }
         val controller = AccountController(Service(), store) { timestamp }; controller.restore()
         assertNull(store.value); assertFalse(controller.state.value.signedIn)
+    }
+    @Test fun recoveryRejectsDifferentAccountBeforeSavingButAllowsOriginalOwner() = runTest {
+        val store = Store(); val api = Service(); val controller = AccountController(api, store) { timestamp }
+        controller.signIn(expectedAccountID = "87654321-4321-4321-4321-210987654321") { "provider-token" }
+        assertNull(store.value); assertFalse(controller.state.value.signedIn)
+        assertEquals(AccountNotice.SAME_ACCOUNT_REQUIRED, controller.state.value.notice); assertEquals(0, api.signOuts)
+        assertEquals(0, api.exchanges)
+        controller.signIn(expectedAccountID = id) { "provider-token" }
+        assertEquals(validSession, store.value); assertTrue(controller.state.value.signedIn)
     }
     @Test fun cancelledChooserAllowsRetryWithoutExchangingOrSaving() = runTest {
         val store = Store(); val api = Service(); val controller = AccountController(api, store) { timestamp }

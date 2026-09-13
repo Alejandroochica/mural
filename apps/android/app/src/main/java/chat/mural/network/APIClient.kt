@@ -2,21 +2,17 @@ package chat.mural.network
 
 import chat.mural.core.SourceLink
 import java.io.IOException
-import java.net.URI
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
@@ -36,11 +32,28 @@ class APIClient private constructor(
     private val readCredential: () -> String?,
     private val client: OkHttpClient = defaultClient(),
     private val baseUrl: HttpUrl = API_BASE_URL,
-) {
+) : TeachingClient, LiveSessionProvider {
     constructor(credentials: CredentialStore) : this(credentials::read)
 
     internal constructor(key: String?, client: OkHttpClient, baseUrl: HttpUrl) :
         this({ key }, client, baseUrl)
+
+    override suspend fun createLiveSession(request: LiveSessionRequest): LiveSessionConnection {
+        val result = post("live/sessions", buildJsonObject {
+            put("session", buildJsonObject {
+                put("model", "gpt-live-1"); put("instructions", request.instructions); put("input", request.history)
+                put("store", false)
+                put("delegation", buildJsonObject { put("type", "client") })
+                put("audio", buildJsonObject { put("output", buildJsonObject { put("voice", "marin") }) })
+            })
+            put("transport", buildJsonObject { put("type", "webrtc"); put("sdp", request.sdp) })
+        })
+        val transport = result["transport"] as? JsonObject ?: throw APIException.InvalidResponse
+        val answer = (transport["sdp"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        if (transport["type"] != JsonPrimitive("webrtc") || answer.isNullOrBlank()) throw APIException.InvalidResponse
+        val id = ((result["session"] as? JsonObject)?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        return LiveSessionConnection(answer, id)
+    }
 
     suspend fun post(path: String, body: JsonObject): JsonObject {
         if (!VALID_PATH.matches(path) || path.contains("..") || path.startsWith('/')) {
@@ -80,11 +93,12 @@ class APIClient private constructor(
         }
     }
 
-    suspend fun respond(
+    override suspend fun respond(
         instructions: String,
         input: String,
-        schema: JsonObject? = null,
-        search: Boolean = false,
+        schema: JsonObject?,
+        search: Boolean,
+        purpose: HelperPurpose?,
     ): APIResult {
         val body = buildJsonObject {
             put("model", "gpt-5.6-luna")
@@ -116,42 +130,7 @@ class APIClient private constructor(
         }
 
         val response = post("responses", body)
-        if (response.string("status") != "completed") throw APIException.Incomplete
-
-        val text = StringBuilder()
-        val sources = linkedMapOf<String, SourceLink>()
-        var searches = 0
-        for (item in response.array("output")) {
-            val output = item as? JsonObject ?: continue
-            if (output.string("type") == "web_search_call") searches += 1
-            for (contentElement in output.array("content")) {
-                val content = contentElement as? JsonObject ?: continue
-                when (content.string("type")) {
-                    "refusal" -> throw APIException.Refused
-                    "output_text" -> text.append(content.string("text").orEmpty())
-                }
-                for (annotationElement in content.array("annotations")) {
-                    val annotation = annotationElement as? JsonObject ?: continue
-                    if (annotation.string("type") != "url_citation") continue
-                    val url = annotation.string("url") ?: continue
-                    if (isSafeSourceUrl(url)) {
-                        sources.putIfAbsent(url, SourceLink(annotation.string("title") ?: "Source", url))
-                    }
-                }
-            }
-        }
-
-        if (text.isEmpty()) throw APIException.Incomplete
-        val usage = response["usage"] as? JsonObject
-        return APIResult(
-            text = text.toString(),
-            sources = sources.values.toList(),
-            usage = APIUsage(
-                input = ((usage?.get("input_tokens") as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, 1_000_000_000),
-                output = ((usage?.get("output_tokens") as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, 1_000_000_000),
-                searches = searches,
-            ),
-        )
+        return decodeTeachingResponse(response)
     }
 
     private fun Response.readBoundedBody(): String {
@@ -209,17 +188,6 @@ class APIClient private constructor(
             .cache(null)
             .build()
 
-        private fun isSafeSourceUrl(value: String): Boolean = try {
-            val uri = URI(value)
-            uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null
-        } catch (_: Exception) {
-            false
-        }
+
     }
 }
-
-private fun JsonObject.string(key: String): String? =
-    (this[key] as? JsonPrimitive)?.contentOrNull
-
-private fun JsonObject.array(key: String): JsonArray =
-    this[key] as? JsonArray ?: JsonArray(emptyList())
