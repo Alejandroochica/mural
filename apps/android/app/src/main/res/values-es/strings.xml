@@ -85,6 +85,8 @@
     <string name="talk_typed_reply_field_label">Tu respuesta</string>
     <string name="talk_typed_reply_send_button">Enviar</string>
     <string name="talk_lookup_dialog_title">Un pequeño significado</string>
+    <string name="talk_pinyin_show">Mostrar pinyin</string>
+    <string name="talk_pinyin_hide">Ocultar pinyin</string>
     <string name="talk_lookup_field_label">Palabra o expresión</string>
     <string name="talk_lookup_button_action">Buscar</string>
     <string name="talk_status_connecting">Preparando la conversación…</string>

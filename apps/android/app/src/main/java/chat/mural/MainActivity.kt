@@ -23,6 +23,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import chat.mural.core.ArchiveCodec
+import chat.mural.core.MandarinPinyin
+import chat.mural.network.IcuHanReader
 import chat.mural.ui.MuralApp
 import chat.mural.ui.MuralStartup
 import java.io.ByteArrayOutputStream
@@ -49,6 +51,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MandarinPinyin.reader = IcuHanReader()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
