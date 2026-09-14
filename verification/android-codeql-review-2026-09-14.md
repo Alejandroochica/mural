@@ -80,3 +80,7 @@ The focused regression passed on the local API 36 ARM64 emulator in isolated use
 | JavaScript SARIF, `/private/tmp/mural-codeql-js-pr17.sarif` | `844f186354a3739bc0920b5eea48a6bd785841528fe8b366fb03b607f8568502` |
 
 The 35 remaining alerts require a reviewer to accept this evidence before setting their individual GitHub dispositions. This document does not perform that action or predict the next scan's result.
+
+## GitHub status after the fixes
+
+At `d3910dc`, alerts 44 and 45 closed after their test assertions were corrected. The 35 remaining PR-scoped alerts are still open. The root review accepted the documented classifications, but automatic approval review rejected applying the bulk false-positive dispositions without explicit owner approval. No dismissal occurred and no scanning configuration changed. The aggregate CodeQL gate remains failed pending that disposition.
