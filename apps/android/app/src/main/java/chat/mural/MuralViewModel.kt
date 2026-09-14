@@ -168,7 +168,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 hostedSessionIDs = providers.hostedIDs
                 pendingHostedOwnerID = providers.pendingOwnerID
                 accountChangeBlocked = providers.pendingOwnerID != null
-                clearAcknowledgedGuestMarker()
+                guests?.recoverAcknowledgedOwnerAtStartup(pendingHostedOwnerID,
+                    clear = { owner -> clearAcknowledgedGuestMarker(owner) },
+                    onFailure = { presentError(getApplication<Application>().getString(R.string.error_guest_secure_storage_unavailable)) })
                 conversationProvider = providers.selection
                 finalAssessmentTickets = ConversationProviderPolicy.recoveryTickets(loaded.first.finalAssessments, hostedSessionIDs)
                 hasKey = loaded.second
@@ -368,11 +370,12 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Two encrypted stores are not crash-atomic. The durable guest receipt repairs only its marker. */
     private suspend fun clearAcknowledgedGuestMarker() {
-        guests?.recoverAcknowledgedOwner(pendingHostedOwnerID) { owner ->
-            providerStore.clearPending()
-            pendingHostedOwnerID = null; accountChangeBlocked = false
-            hostedBindings.delegateOwnerRecovery(owner)
-        }
+        guests?.recoverAcknowledgedOwner(pendingHostedOwnerID) { owner -> clearAcknowledgedGuestMarker(owner) }
+    }
+    private suspend fun clearAcknowledgedGuestMarker(owner: String) {
+        providerStore.clearPending()
+        pendingHostedOwnerID = null; accountChangeBlocked = false
+        hostedBindings.delegateOwnerRecovery(owner)
     }
 
     /** Member spending requires a durable server acknowledgment; guest transfer may finish later. */
@@ -470,7 +473,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 hostedFinalAssessmentJobs.values.toList().forEach { it.cancel() }; hostedFinalAssessmentJobs.clear()
                 // Wait only for local startup/provenance persistence, never remote guest settlement.
-                withTimeoutOrNull(10_000) { connectionJob?.join(); true } ?: false
+                awaitLocalSignInStartup(connectionJob) {
+                    presentError(getApplication<Application>().getString(R.string.error_sign_in_finishing_startup))
+                }
             }
         },
         pendingOwner = { pendingHostedOwnerID },

@@ -1,11 +1,30 @@
 package chat.mural.core
 
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
 class AccountSignInPreparationTest {
+    @Test fun slowLocalStartupExplainsTimeoutWithoutInvokingOAuthOrCancellingThePendingWrite() = runTest {
+        val write = Job(); var notices = 0; var accountChecks = 0
+        val preparation = AccountSignInPreparation({ awaitLocalSignInStartup(write) { notices++ } },
+            { accountChecks++; "guest-owner" }, { true }, { true })
+        assertFalse(preparation.prepare()); assertEquals(1, notices); assertEquals(0, accountChecks)
+        assertTrue(write.isActive)
+        write.complete()
+        assertTrue(preparation.prepare()); assertEquals(1, notices); assertEquals(1, accountChecks)
+    }
+
+    @Test fun cancellingStartupWaitDoesNotReportTimeoutOrAuthorizeSignIn() = runTest {
+        val write = Job(); var notices = 0
+        val waiting = async { awaitLocalSignInStartup(write) { notices++ } }
+        yield(); waiting.cancelAndJoin()
+        assertEquals(0, notices); assertTrue(write.isActive)
+        write.cancel()
+        assertTrue(awaitLocalSignInStartup(null) { error("Nothing to wait for") })
+    }
+
     @Test fun exhaustedGuestCanReachOAuthWhileRemoteSettlementRemainsUnconfirmed() = runTest {
         var localClosed = false; var identityAdded = false
         val pending: String? = "guest-owner"

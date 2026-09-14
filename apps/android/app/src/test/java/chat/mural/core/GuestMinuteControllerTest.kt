@@ -41,6 +41,35 @@ class GuestMinuteControllerTest {
     }
     private fun controller(store: Store, api: Service) = GuestMinuteController(store, api, { "i".repeat(43) }, { now })
 
+    @Test fun unreadableGuestCredentialsDoNotAbortIndependentLearningStartupOrClearPendingOwner() = runTest {
+        val saved = GuestInstallation("i".repeat(43), guest, pendingMemberID = member.accountID)
+        val store = Store(saved).apply { corrupt = true }; val subject = controller(store, Service())
+        var pendingOwner: String? = guest.accountID; var notices = 0
+        subject.recoverAcknowledgedOwnerAtStartup(pendingOwner, { pendingOwner = null }, { notices++ })
+        assertEquals(1, notices); assertEquals(guest.accountID, pendingOwner); assertEquals(saved, store.saved)
+        // Recovery failed closed: no new identity, hosted owner, or account mutation is authorized.
+        assertFalse(subject.acquire())
+        try { subject.needsLink(); fail("Unreadable credentials must not imply no pending link") }
+        catch (_: AccountFailure.SecureStorage) { }
+        store.corrupt = false
+        assertEquals(member.accountID, subject.expectedMemberID())
+    }
+
+    @Test fun startupReceiptCleanupFailurePreservesRetryAndCancellationPropagates() = runTest {
+        val saved = GuestInstallation("i".repeat(43), linkedMemberID = member.accountID, acknowledgedGuestID = guest.accountID)
+        val store = Store(saved); val subject = controller(store, Service()); var notices = 0
+        var pendingOwner: String? = guest.accountID
+        subject.recoverAcknowledgedOwnerAtStartup(pendingOwner, { throw AccountFailure.SecureStorage }, { notices++ })
+        assertEquals(1, notices); assertEquals(saved, store.saved); assertEquals(guest.accountID, pendingOwner)
+        subject.recoverAcknowledgedOwnerAtStartup(pendingOwner, { pendingOwner = null }, { error("Retry must succeed") })
+        assertNull(pendingOwner)
+        try {
+            subject.recoverAcknowledgedOwnerAtStartup(guest.accountID,
+                { throw CancellationException("ViewModel cleared") }, { error("Cancellation is not storage failure") })
+            fail("Cancellation must propagate")
+        } catch (_: CancellationException) { }
+    }
+
     @Test fun terminalReceiptRepairsOnlyItsGuestMarkerAfterRestartBetweenStoreWrites() = runTest {
         val store = Store(GuestInstallation("i".repeat(43), guest)); val api = Service()
         val first = controller(store, api)

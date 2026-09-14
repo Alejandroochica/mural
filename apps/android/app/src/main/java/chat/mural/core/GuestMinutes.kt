@@ -94,6 +94,14 @@ class GuestMinuteController(
         true
     }
 
+    /** Guest credential recovery must not prevent independent learning/BYOK storage from opening. */
+    suspend fun recoverAcknowledgedOwnerAtStartup(pendingOwner: String?, clear: suspend (String) -> Unit,
+        onFailure: () -> Unit) {
+        try { recoverAcknowledgedOwner(pendingOwner, clear) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { onFailure() }
+    }
+
     /** Persist custody retirement before DELETE: even a lost deletion response cannot pin OAuth.
      * This changes no server balance and never resets the installation's consumed trial. */
     suspend fun retireAcknowledgedLinkForDeletion(memberID: String) = lock.withLock {
