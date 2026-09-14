@@ -1,5 +1,7 @@
 # Android version 4 — 14 September 2026
 
+This is the historical v4 packaging record. The later [Play submission record](evidence/play-submission-2026-09-14.json) records v4 in review; the current source and default release spec are v5. Recheck this bundle with [specs/play-v4.json](specs/play-v4.json) using the [explicit-spec procedure](build-and-verify.md#3-validate-the-exact-bundle-and-assets). The original evidence below remains unchanged.
+
 Version 4 adds an account-deletion support dialog with email, copy-address and web options. It retains the free-trial and personal-key experience. Paid checkout is disabled, with its environment set to `test` in both packaged builds.
 
 The candidate was built from clean commit `cd75bdb23ee1ed5d4318ff084d7400b35306120a`. Both files use `chat.mural.android`, version 0.1 (code 4), minimum API 26 and target API 36. The API origin is `https://api.mural.chat`; the Google client ID is public configuration. No provider key or account credential is bundled.
