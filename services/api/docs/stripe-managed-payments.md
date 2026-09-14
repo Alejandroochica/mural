@@ -27,6 +27,8 @@ Adaptive Pricing keeps Checkout Session and PaymentIntent amounts in the integra
 | Charge | Correct PaymentIntent; paid, captured, succeeded; `amount` and `amount_captured` equal Session gross |
 | Presentment details, when present | Positive safe integer amount and currency; provided Session, PaymentIntent and Charge details agree |
 
+Catalog base amounts remain limited to `100,000,000` minor units. Verified gross, tax and refund amounts use a separate representation bound of `9,007,199,254,740,991` (`Number.MAX_SAFE_INTEGER`); this is a parsing limit, not a promise that Stripe accepts charges of that size. Migration `022_stripe_provider_amount_bounds.sql` applies the same gross bound in PostgreSQL. Base-plus-tax comparison and refund normalization use `BigInt`, and cumulative refunds are checked against the remaining gross before addition.
+
 `minute_stripe_paid_totals` preserves the verified gross and tax in integration-currency minor units. The row is immutable. Subsequent reconciliation rejects a changed gross or tax instead of changing a refund's denominator. Runtime privileges permit only read and insert access to this table.
 
 ## Refund evidence

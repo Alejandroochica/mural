@@ -7,7 +7,7 @@ ALTER TABLE hosted_sessions ADD CONSTRAINT hosted_rejection_evidence CHECK (
     AND (provider_rejection_request_id IS NULL OR provider_rejection_request_id ~ '^[A-Za-z0-9_-]{1,128}$')
     AND state='closed' AND provider_session_id IS NULL AND observed_ms=0
     AND provider_cost_nano IS NOT NULL AND provider_cost_nano=0 AND funding_exposure_nano=0
-    AND COALESCE(charged_ms,charged_nano) IS NOT NULL AND COALESCE(charged_ms,charged_nano)=0 AND close_reason IS NOT NULL AND close_reason='provider_create_rejected'));
+    AND COALESCE(charged_ms,charged_nano) IS NOT NULL AND COALESCE(charged_ms,charged_nano)=0 AND close_reason IS NOT NULL AND close_reason='provider_create_rejected')) NOT VALID;
 CREATE FUNCTION preserve_hosted_rejection() RETURNS trigger LANGUAGE plpgsql AS $function$
 BEGIN
   IF OLD.provider_rejection_status IS NOT NULL AND

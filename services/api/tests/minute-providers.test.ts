@@ -415,6 +415,48 @@ test('gross tax-inclusive refunds normalize conservatively into the original pri
     assert.throws(() => normalizeStripeRefund(...amounts as [number,number,number]), /refund_not_reconciled/);
 });
 
+test('provider gross bounds stay separate from catalog bases and retain exact large refund arithmetic', () => {
+  const base = 100_000_000, gross = Number.MAX_SAFE_INTEGER;
+  assert.equal(normalizeStripeRefund(base, gross, gross), base);
+  assert.equal(normalizeStripeRefund(base, 1, gross), 1);
+  assert.equal(normalizeStripeRefund(base, 4_503_599_627_370_495, gross), 50_000_000);
+  assert.equal(normalizeStripeRefund(base, 100_000_001, 100_000_001), base);
+  for (const amounts of [[base+1,1,gross],[base,1,gross+1],[base,gross+1,gross],
+    [base,1,Infinity],[base,NaN,gross],[base,1,100_000_000.5]])
+    assert.throws(() => normalizeStripeRefund(...amounts as [number,number,number]), /refund_not_reconciled/);
+});
+
+integration('taxed provider totals above the catalog ceiling persist and refund at the exact original base', async () => {
+  const f = await fixture(true);
+  try {
+    const account = await f.account(), base = 100_000_000;
+    const product = { ...f.catalog[0]!, totalMinor: base };
+    const purchases = new MinutePurchases(f.db, { catalog: [product], verifiers: [f.stripe], salesEnabled: true });
+    for (const gross of [100_000_001, Number.MAX_SAFE_INTEGER]) {
+      const order = await purchases.createOrder(account, 'stripe', product.sku, randomUUID());
+      await f.db.query('INSERT INTO minute_stripe_checkout_attempts(order_id,managed_payments) VALUES($1,true)', [order.orderID]);
+      f.stripeTransport.bind(order.orderID); f.stripeTransport.managed(gross-base,base); f.stripeTransport.paid();
+      f.stripeTransport.current.id = `cs_test_${order.orderID.replaceAll('-','')}`;
+      f.stripeTransport.refundsValue=[];
+      const paid = await f.stripe.verify(f.stripeTransport.event());
+      assert.equal(paid.totalMinor,base); assert.equal(paid.refundedMinor,0);
+      assert.deepEqual((await f.db.query('SELECT gross_minor,tax_minor FROM minute_stripe_paid_totals WHERE order_id=$1', [order.orderID])).rows[0],
+        { gross_minor:String(gross),tax_minor:String(gross-base) });
+      f.stripeTransport.refundsValue=[{id:'re_large',charge:'ch_synthetic',payment_intent:'pi_synthetic',currency:'usd',amount:gross,status:'succeeded'}];
+      assert.equal((await f.stripe.verify(f.stripeTransport.event('refund.updated'))).refundedMinor,base);
+      // Each individual amount is safe; their cumulative sum must never overflow or exceed gross.
+      f.stripeTransport.refundsValue.push({id:'re_excess',charge:'ch_synthetic',payment_intent:'pi_synthetic',currency:'usd',amount:1,status:'succeeded'});
+      await assert.rejects(f.stripe.verify(f.stripeTransport.event('refund.updated')), /refund_not_reconciled/);
+    }
+    const order = await purchases.createOrder(account, 'stripe', product.sku, randomUUID());
+    await f.db.query('INSERT INTO minute_stripe_checkout_attempts(order_id,managed_payments) VALUES($1,true)', [order.orderID]);
+    for (const gross of ['0','-1','9007199254740992'])
+      await assert.rejects(f.db.query('INSERT INTO minute_stripe_paid_totals(order_id,gross_minor,tax_minor) VALUES($1,$2,0)', [order.orderID,gross]), {code:'23514'});
+    await assert.rejects(f.db.query('INSERT INTO minute_stripe_paid_totals(order_id,gross_minor,tax_minor) VALUES($1,10,11)', [order.orderID]), {code:'23514'});
+    await assert.rejects(f.db.query('UPDATE minute_stripe_paid_totals SET gross_minor=1'), /immutable/);
+  } finally { await f.cleanup(); }
+});
+
 integration('Managed Payments pins mode before creation and excludes unsupported Stripe parameters', async () => {
   const f = await fixture(true);
   try {
@@ -479,6 +521,8 @@ integration('Managed verification rejects downgrade, missing binding, malformed 
       () => {f.stripeTransport.intentValue.managed_payments=null;},
       () => {f.stripeTransport.current.total_details.amount_tax=-1;},
       () => {f.stripeTransport.current.total_details.amount_tax=200.5;},
+      () => {f.stripeTransport.current.total_details.amount_tax=Number.MAX_SAFE_INTEGER+1;},
+      () => {f.stripeTransport.current.amount_total=Number.MAX_SAFE_INTEGER+1;},
       () => {f.stripeTransport.current.total_details.amount_shipping=1;},
       () => {f.stripeTransport.current.total_details.amount_discount=1;},
       () => {f.stripeTransport.current.amount_subtotal=998;},

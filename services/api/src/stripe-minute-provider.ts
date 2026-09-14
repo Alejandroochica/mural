@@ -60,6 +60,9 @@ export class StripeSDKMinuteTransport implements StripeMinuteTransport {
 const objectID = (value: any): string | undefined => typeof value === 'string' ? value : typeof value?.id === 'string' ? value.id : undefined;
 const stripeID = (value: unknown, prefix: string) => typeof value === 'string' && new RegExp(`^${prefix}_[A-Za-z0-9_]{1,250}$`).test(value);
 const integerMoney = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 100_000_000;
+// Provider totals include tax; bound their representation separately from the catalog base.
+const integerProviderAmount = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
 const stripeChargeID = (value: unknown) => stripeID(value, 'ch') || stripeID(value, 'py');
 const stripeRefundID = (value: unknown) => stripeID(value, 're') || stripeID(value, 'pyr');
 function validatePresentment(value: { presentment_amount: number; presentment_currency: string } | null | undefined) {
@@ -71,7 +74,7 @@ function validatePresentment(value: { presentment_amount: number; presentment_cu
 }
 /** Round towards revoking value; a full gross refund always revokes the entire original allocation. */
 export function normalizeStripeRefund(base: number, refundedGross: number, gross: number): number {
-  if (!integerMoney(base) || base <= 0 || !integerMoney(gross) || gross < base || !integerMoney(refundedGross) || refundedGross > gross)
+  if (!integerMoney(base) || base <= 0 || !integerProviderAmount(gross) || gross < base || !integerProviderAmount(refundedGross) || refundedGross > gross)
     throw new ServiceError('stripe_refund_not_reconciled', 409);
   return Number((BigInt(base) * BigInt(refundedGross) + BigInt(gross) - 1n) / BigInt(gross));
 }
@@ -110,9 +113,9 @@ export class StripeMinuteProvider implements MinuteDeliveryAdapter {
       return { gross: base, tax: 0 };
     }
     const totals = session.total_details;
-    if (session.amount_subtotal !== base || !integerMoney(session.amount_total) || !totals ||
-      !integerMoney(totals.amount_tax) || totals.amount_discount !== 0 || totals.amount_shipping !== 0 ||
-      session.amount_total !== base + totals.amount_tax)
+    if (session.amount_subtotal !== base || !integerProviderAmount(session.amount_total) || !totals ||
+      !integerProviderAmount(totals.amount_tax) || totals.amount_discount !== 0 || totals.amount_shipping !== 0 ||
+      BigInt(session.amount_total!) !== BigInt(base) + BigInt(totals.amount_tax))
       throw new ServiceError('stripe_managed_totals_mismatch', 409);
     validatePresentment(session.presentment_details);
     return { gross: session.amount_total!, tax: totals.amount_tax };
@@ -231,7 +234,7 @@ export class StripeMinuteProvider implements MinuteDeliveryAdapter {
         if (!Array.isArray(refunds.data) || refunds.data.length > 100) throw new ServiceError('stripe_refund_not_reconciled', 409);
         for (const refund of refunds.data) {
           if (refundIDs.has(refund.id) || !stripeRefundID(refund.id) || objectID(refund.payment_intent) !== intentID || refund.currency !== order.currency ||
-            !integerMoney(refund.amount) || !['succeeded','pending','failed','canceled','requires_action'].includes(refund.status ?? '')) throw new ServiceError('stripe_refund_not_reconciled', 409);
+            !integerProviderAmount(refund.amount) || !['succeeded','pending','failed','canceled','requires_action'].includes(refund.status ?? '')) throw new ServiceError('stripe_refund_not_reconciled', 409);
           if (managed) {
             if (objectID(refund.charge) !== charge.id) throw new ServiceError('stripe_refund_not_reconciled', 409);
             const refundedPresentment = validatePresentment(refund.presentment_details);
@@ -240,7 +243,10 @@ export class StripeMinuteProvider implements MinuteDeliveryAdapter {
               refundedPresentment.presentment_amount > paidPresentment.presentment_amount)) throw new ServiceError('stripe_refund_not_reconciled', 409);
           }
           refundIDs.add(refund.id);
-          if (refund.status === 'succeeded') refundedMinor += refund.amount;
+          if (refund.status === 'succeeded') {
+            if (refund.amount > gross - refundedMinor) throw new ServiceError('stripe_refund_not_reconciled', 409);
+            refundedMinor += refund.amount;
+          }
         }
         if (!refunds.has_more) { complete = true; break; }
         const lastID = refunds.data.at(-1)?.id;
