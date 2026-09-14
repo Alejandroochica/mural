@@ -109,6 +109,58 @@ class StripeMinutePurchaseControllerTest {
         assertNotNull(memory.attempts[id])
     }
 
+    @Test fun removedProductAdmissionClearsUncreatedAttemptAndAllowsAnotherPack() = runTest {
+        for (code in listOf("ai_value_product_unavailable", "minute_product_unavailable")) {
+            val api = API(); val memory = Memory(); val controller = controller(api, memory)
+            controller.onForeground(); api.onCreate = { throw MinuteCommerceFailure.Unavailable }
+            controller.buy(product.sku) { error("lost response") }
+            val oldKey = memory.attempts[id]!!.key
+            val replacement = product.copy(sku = "replacement-value")
+            api.catalogValue = MinuteCatalog(true, listOf(replacement))
+            api.onCreate = { throw MinuteCommerceFailure.Http(503, code) }
+            controller.onForeground()
+            assertEquals(1, api.lookups)
+            assertNull(memory.attempts[id])
+            api.onCreate = {}
+            controller.buy(replacement.sku) { MinuteStoreOutcome.OPENED }
+            assertNotEquals(oldKey, memory.attempts[id]!!.key)
+            assertEquals(replacement.sku, memory.attempts[id]!!.sku)
+        }
+    }
+    @Test fun directAdmissionRejectionCanRetryButAmbiguousAndPostInsertFailuresKeepKey() = runTest {
+        for (failure in listOf(
+            MinuteCommerceFailure.Http(503, "ai_value_product_unavailable"),
+            MinuteCommerceFailure.Http(503, "minute_purchases_unavailable"),
+            MinuteCommerceFailure.Http(409, "checkout_reconciliation_required"),
+            MinuteCommerceFailure.Http(409, "checkout_no_longer_open"),
+            MinuteCommerceFailure.Http(409, "idempotency_conflict"),
+            MinuteCommerceFailure.Http(401, "unauthorized"),
+            MinuteCommerceFailure.Http(503, "stripe_minute_price_mismatch"),
+            MinuteCommerceFailure.Http(502, "stripe_provider_unavailable"),
+            MinuteCommerceFailure.InvalidResponse,
+            MinuteCommerceFailure.Unavailable)) {
+            val api = API(); val memory = Memory(); val controller = controller(api, memory)
+            controller.onForeground(); api.onCreate = { throw failure }
+            controller.buy(product.sku) { error("rejected") }
+            if (failure is MinuteCommerceFailure.Http && failure.code == "ai_value_product_unavailable") {
+                assertNull(memory.attempts[id])
+            } else {
+                val firstKey = memory.attempts[id]!!.key
+                controller.onForeground()
+                assertEquals(firstKey, memory.attempts[id]!!.key)
+                assertEquals(listOf(firstKey, firstKey), api.keys)
+            }
+        }
+    }
+    @Test fun knownOrderIsNeverClearedByCatalogFailure() = runTest {
+        val api = API(); val memory = Memory(); val controller = controller(api, memory)
+        controller.onForeground(); controller.buy(product.sku) { MinuteStoreOutcome.OPENED }
+        val attempt = memory.attempts[id]
+        api.onCreate = { throw MinuteCommerceFailure.Http(503, "ai_value_product_unavailable") }
+        controller.buy(product.sku) { error("rejected") }
+        assertEquals(attempt, memory.attempts[id])
+    }
+
     @Test fun duplicateTapsAndAccountSwitchDuringCreateCannotLaunchForAnotherMember() = runTest {
         val api = API(); val memory = Memory(); var selected: AccountSession? = member
         val controller = controller(api, memory) { selected }; controller.onForeground()

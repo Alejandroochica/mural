@@ -88,7 +88,7 @@ class StripeMinutePurchaseController(
                 pending = recoverOrder(member, pending)
                 if (pending.orderID == null) {
                     // No owned order exists yet; reuse the durable key for the interrupted create.
-                    val recovered = api.createStripe(member, pending.sku, pending.key)
+                    val recovered = createOrder(member, pending)
                     current(member)
                     pending = pending.copy(orderID = recovered.orderID)
                     storage.save(pending)
@@ -141,7 +141,7 @@ class StripeMinutePurchaseController(
             // Durable before contacting the server: retries cannot create duplicate orders.
             storage.save(it)
         }
-        val order = api.createStripe(member, sku, attempt.key)
+        val order = createOrder(member, attempt)
         if (attempt.orderID != null && attempt.orderID != order.orderID) throw MinuteCommerceFailure.InvalidResponse
         storage.save(attempt.copy(orderID = order.orderID))
         current(member)
@@ -156,6 +156,18 @@ class StripeMinutePurchaseController(
     }
     fun dismissNotice() { mutable.value = mutable.value.copy(notice = null) }
     fun close() { stopped = true; products = emptyMap(); mutable.value = emptyState() }
+    private suspend fun createOrder(member: AccountSession, attempt: StripePurchaseAttempt): StripeMinuteOrder = try {
+        api.createStripe(member, attempt.sku, attempt.key)
+    } catch (error: MinuteCommerceFailure.Http) {
+        // These catalog errors occur only after the server checks for an existing order,
+        // and before inserting one. Other errors can follow a committed payable order.
+        if (attempt.orderID == null && error.status == 503 && error.code in setOf(
+                "ai_value_product_unavailable", "minute_product_unavailable")) {
+            current(member)
+            storage.remove(member.accountID)
+        }
+        throw error
+    }
     private suspend fun recoverOrder(member: AccountSession, attempt: StripePurchaseAttempt): StripePurchaseAttempt {
         if (attempt.orderID != null) return attempt
         val orderID = api.findStripeOrder(member, attempt.key)
