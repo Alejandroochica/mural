@@ -1,5 +1,7 @@
 package chat.mural.ui
 
+import android.os.Build
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -102,7 +104,8 @@ fun TalkScreen(
         constraints = Constraints(maxWidth = captionWidth),
     ).lineCount > 2
     val readingSpace by animateFloatAsState(
-        if (longPassage || (vm.language.id == "zh" && chat.mural.core.MandarinPinyin.containsHan(caption))) 1f else 0f, spring(dampingRatio = 1f, stiffness = 260f), label = "passage reading space",
+        if (longPassage || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            vm.language.id == "zh" && chat.mural.core.MandarinPinyin.containsHan(caption))) 1f else 0f, spring(dampingRatio = 1f, stiffness = 260f), label = "passage reading space",
     )
     val orbSize = when {
         scrollPage -> 170.dp
