@@ -240,4 +240,6 @@
     <string name="consent_privacy_policy_link">Privacy policy</string>
     <string name="consent_agree_button">Agree and continue</string>
     <string name="consent_decline_button">Not now</string>
+    <string name="error_guest_secure_storage_unavailable">Mural couldn\'t restore your saved trial details. Your learning history is still available. Restart the app to try again.</string>
+    <string name="error_sign_in_finishing_startup">Mural is still saving your conversation. Please try signing in again shortly.</string>
 </resources>

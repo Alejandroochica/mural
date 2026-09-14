@@ -96,6 +96,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingHostedOwnerID: String? = null
     /** Reauthentication may renew this account only; another account cannot replace an unresolved owner. */
     suspend fun pendingMemberForSignIn(): String? {
+        clearAcknowledgedGuestMarker()
         guests?.expectedMemberID()?.let { return it }
         val pending = pendingHostedOwnerID ?: return null
         if (guests?.owns(pending) != true) return pending
@@ -167,6 +168,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 hostedSessionIDs = providers.hostedIDs
                 pendingHostedOwnerID = providers.pendingOwnerID
                 accountChangeBlocked = providers.pendingOwnerID != null
+                guests?.recoverAcknowledgedOwnerAtStartup(pendingHostedOwnerID,
+                    clear = { owner -> clearAcknowledgedGuestMarker(owner) },
+                    onFailure = { presentError(getApplication<Application>().getString(R.string.error_guest_secure_storage_unavailable)) })
                 conversationProvider = providers.selection
                 finalAssessmentTickets = ConversationProviderPolicy.recoveryTickets(loaded.first.finalAssessments, hostedSessionIDs)
                 hasKey = loaded.second
@@ -330,10 +334,10 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) }
                 if (member != null) {
+                    clearAcknowledgedGuestMarker()
                     if (guests?.needsLink() == true) {
                         readiness.selectAccount(null, true)
-                        if (pendingHostedOwnerID != null && !settleHostedSessions()) return@launch
-                        if (!guests.linkTo(member)) return@launch
+                        if (!completeGuestSignIn() && guests.memberMaySpend(member.accountID) != true) return@launch
                     }
                     if (selectedAccount.busy) return@launch
                     readiness.selectAccount(member.accountID, false)
@@ -344,7 +348,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     guests?.acquire()
                     if (selectedAccount.busy) return@launch
-                    val guest = guests?.session()
+                    val guest = guests?.availableSession()
                     readiness.selectAccount(guest?.accountID, false)
                     readiness.refresh()
                 }
@@ -358,21 +362,54 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (hostedReadiness.ready && !selectedAccount.busy) return false
         showMinuteAccess = true; refreshHostedReadiness(); return true
     }
-    /** Durable guest transfer survives Activity cancellation and retries before the member can spend. */
+    suspend fun prepareGuestCustodyForDeletion(memberID: String) {
+        try { guests?.retireAcknowledgedLinkForDeletion(memberID) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { throw AccountFailure.SecureStorage }
+    }
+
+    /** Two encrypted stores are not crash-atomic. The durable guest receipt repairs only its marker. */
+    private suspend fun clearAcknowledgedGuestMarker() {
+        guests?.recoverAcknowledgedOwner(pendingHostedOwnerID) { owner -> clearAcknowledgedGuestMarker(owner) }
+    }
+    private suspend fun clearAcknowledgedGuestMarker(owner: String) {
+        providerStore.clearPending()
+        pendingHostedOwnerID = null; accountChangeBlocked = false
+        hostedBindings.delegateOwnerRecovery(owner)
+    }
+
+    /** Member spending requires a durable server acknowledgment; guest transfer may finish later. */
     suspend fun completeGuestSignIn(): Boolean {
         val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) } ?: return false
-        val linked = guests?.linkTo(member) ?: true
-        if (!linked) showMinuteAccess = true
-        return linked
+        val guestOwner = guests?.retainedOwnerID()
+        if (guestOwner != null && pendingHostedOwnerID == guestOwner) {
+            if (isRunning) return false
+            // Finish pending local provenance writes before handing remote recovery to the server.
+            connectionJob?.join()
+            reconciliationJob?.cancelAndJoin()
+        }
+        val accepted = guests?.linkTo(member, allowDeferred = true) ?: true
+        val safe = accepted || guests?.memberMaySpend(member.accountID) == true
+        if (safe && guestOwner != null && pendingHostedOwnerID == guestOwner) {
+            // The retained GuestInstallation still owns its bearer and acknowledged member binding.
+            // Server recovery owns the old lease; never close it with the new member bearer.
+            withContext(NonCancellable) {
+                providerStore.clearPending()
+                pendingHostedOwnerID = null; accountChangeBlocked = false
+                hostedBindings.delegateOwnerRecovery(guestOwner)
+            }
+        }
+        if (!safe) showMinuteAccess = true
+        return safe
     }
     private suspend fun availableHostedOwner(): AccountSession? {
         val member = memberSessions?.read()?.takeIf { it.isValid(System.currentTimeMillis()) }
-        if (member != null) return member.takeIf { guests?.needsLink() != true }
-        return guests?.session()
+        if (member != null) return member.takeIf { guests?.needsLink() != true || guests?.memberMaySpend(member.accountID) == true }
+        return guests?.availableSession()
     }
     private suspend fun requireHostedOwner(ownerID: String? = null): AccountSession {
         // The pending guest lease must still be closable after Google has stored a member bearer.
-        val guest = if (ownerID != null) guests?.session(ownerID) else null
+        val guest = if (ownerID != null) guests?.sessionForSettlement(ownerID) else null
         return guest ?: availableHostedOwner()?.takeIf { ownerID == null || it.accountID == ownerID }
             ?: throw HostedFailure.SignInRequired
     }
@@ -416,6 +453,36 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         else -> getApplication<Application>().getString(R.string.hosted_request_failed)
     }
 
+    /** Renewing a member token must not turn a retained guest transfer back into an OAuth gate. */
+    suspend fun settleRenewedMember(): Boolean {
+        val pending = pendingHostedOwnerID ?: return true
+        if (guests?.owns(pending) == true) return true
+        return prepareForAccountChange()
+    }
+
+    /** Google identity can be added while guest accounting finishes; guest credentials stay separate. */
+    suspend fun prepareForSignIn(): Boolean = AccountSignInPreparation(
+        finishLocalWork = {
+            if (!storageReady) {
+                presentError(getApplication<Application>().getString(R.string.error_resolve_local_history_first))
+                false
+            } else {
+                hostedBindings.disableHelpers(); meanings.reset()
+                if (isRunning && (session?.id in hostedSessionIDs || conversationProvider == ConversationProvider.HOSTED_MINUTES)) {
+                    updateSession { it.endReason = "Signing in" }; finish(false)
+                }
+                hostedFinalAssessmentJobs.values.toList().forEach { it.cancel() }; hostedFinalAssessmentJobs.clear()
+                // Wait only for local startup/provenance persistence, never remote guest settlement.
+                awaitLocalSignInStartup(connectionJob) {
+                    presentError(getApplication<Application>().getString(R.string.error_sign_in_finishing_startup))
+                }
+            }
+        },
+        pendingOwner = { pendingHostedOwnerID },
+        guestOwns = { guests?.owns(it) == true },
+        prepareAccountChange = { prepareForAccountChange() },
+    ).prepare()
+
     /** Root UI wiring must use this before sign-out, deletion, account switching, or session revocation. */
     suspend fun prepareForAccountChange(): Boolean {
         if (!storageReady) {
@@ -453,7 +520,8 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         return try {
             val owner = requireHostedOwner(ownerID)
             if (owner.accountID != ownerID) return false
-            for (id in hostedBindings.openSessionIDs) if (!hostedBindings.closeAndConfirm(id)) return false
+            for (id in hostedBindings.openSessionIDs.filter { hostedBindings.owner(it) == ownerID })
+                if (!hostedBindings.closeAndConfirm(id)) return false
             // An interrupted create may have committed remotely without returning its lease locally.
             val client = hostedClient(ownerID)
             val current = client.currentSession()
