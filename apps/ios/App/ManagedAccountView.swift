@@ -73,7 +73,7 @@ struct ManagedAccountView: View {
             Button("Delete account", role: .destructive, action: store.deleteAccount)
             Button("Keep account", role: .cancel) {}
         } message: {
-            Text("This removes your sign-in details and account sessions. Learning history stays on this iPhone; you can remove it separately in Settings.")
+            Text("This removes your sign-in details and account sessions and forfeits any unused free minutes. Learning history stays on this iPhone; you can remove it separately in Settings. A paid balance, pending payment or active conversation must be resolved before deletion.")
         }
     }
 }

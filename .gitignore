@@ -6,6 +6,8 @@ DerivedData/
 **/xcuserdata/
 *.xcuserstate
 apps/ios/Config/Local.xcconfig
+# Existing iOS checkouts keep this ignored file until local settings are migrated.
+Config/Local.xcconfig
 *.p12
 *.p8
 *.mobileprovision
