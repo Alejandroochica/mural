@@ -99,6 +99,28 @@ test('live environment needs its separate gate and environment-matched keys and 
   } finally { await f.clean(); }
 });
 
+test('restricted Stripe keys retain environment validation and do not open sales', async () => {
+  const f = await fixture();
+  try {
+    for (const environment of ['test', 'live']) {
+      f.manifest.environment = environment;
+      f.env.MURAL_MINUTE_ALLOW_LIVE = String(environment === 'live');
+      await f.file('COMMERCE_CONFIG_FILE', f.manifest);
+      await f.file('CATALOG_FILE', { version: 1, products: [{ ...stripeQuote, environment }] });
+      await f.file('STRIPE_CREDENTIALS_FILE', { secretKey: `rk_${environment}_` + 'syntheticfixture'.repeat(2),
+        webhookSecret: 'whsec_' + 'syntheticfixture'.repeat(2) });
+      const service = (await configuredMinuteCommerce(f.db, f.env))!;
+      assert.equal(service.environment, environment);
+      assert.equal(service.salesEnabled, false);
+      await service.runner.stop();
+      const other = environment === 'test' ? 'live' : 'test';
+      await f.file('STRIPE_CREDENTIALS_FILE', { secretKey: `rk_${other}_` + 'syntheticfixture'.repeat(2),
+        webhookSecret: 'whsec_' + 'syntheticfixture'.repeat(2) });
+      await assert.rejects(configuredMinuteCommerce(f.db, f.env), configError);
+    }
+  } finally { await f.clean(); }
+});
+
 test('configuration rejects public files, symlinks, hard links, oversized input and malformed JSON without exposing contents', async () => {
   const f = await fixture();
   try {

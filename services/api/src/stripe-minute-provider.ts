@@ -29,7 +29,7 @@ export interface StripeMinuteConfig {
 function validateConfig(config: StripeMinuteConfig) {
   const environment = config.environment ?? 'test';
   if (!['test','live'].includes(environment) || (environment === 'live' && config.allowLive !== true) ||
-    !new RegExp(`^sk_${environment}_[A-Za-z0-9]{8,}$`).test(config.secretKey) ||
+    !new RegExp(`^(?:sk|rk)_${environment}_[A-Za-z0-9]{8,}$`).test(config.secretKey) ||
     !/^whsec_[A-Za-z0-9]{8,}$/.test(config.webhookSecret) || !/^acct_[A-Za-z0-9]+$/.test(config.accountID))
     throw new ServiceError('stripe_minute_configuration_invalid', 503);
   let origin: URL;

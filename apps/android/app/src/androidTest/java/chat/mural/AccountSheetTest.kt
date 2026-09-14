@@ -1,11 +1,18 @@
 package chat.mural
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import chat.mural.core.AccountState
+import chat.mural.core.AccountNotice
 import chat.mural.core.ConversationProvider
 import chat.mural.core.MinuteBalance
 import chat.mural.ui.AccountSheet
@@ -74,5 +81,76 @@ class AccountSheetTest {
         compose.onNodeWithTag("account-buy-minutes").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText(context.getString(R.string.account_sign_out)).assertDoesNotExist()
         compose.runOnIdle { assertEquals(0, purchases) }
+    }
+
+    @Test fun blockedDeletionOpensOnlyAnExplicitSupportDraftWithoutAccountData() {
+        var deletions = 0
+        val opened = mutableListOf<String>()
+        val uri = object : UriHandler { override fun openUri(uri: String) { opened += uri } }
+        compose.setContent { CompositionLocalProvider(LocalUriHandler provides uri) { MuralTheme {
+            AccountSheet(member.copy(email = "private-member@example.test", notice = AccountNotice.BILLING_UNRESOLVED),
+                {}, {}, {}, { deletions++ }, {})
+        } } }
+        compose.onNodeWithTag("account-deletion-support").performScrollTo().performClick()
+        compose.onNodeWithText("hi@hackmamba.io").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(opened.isEmpty()); assertEquals(0, deletions) }
+        compose.onNodeWithTag("account-deletion-email").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf("mailto:hi@hackmamba.io?subject=Mural%20account%20deletion%20request"), opened)
+            assertEquals(0, deletions)
+        }
+        compose.onNodeWithTag("account-deletion-request").assertExists()
+        compose.onNodeWithText(context.getString(R.string.account_deleted)).assertDoesNotExist()
+        compose.onNodeWithTag("account-deletion-web").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("https://mural.chat/support/#delete-account", opened.last()) }
+    }
+
+    @Test fun noEmailOrBrowserAppKeepsACopyableContactAndDoesNotClaimSubmission() {
+        val clipboard = object : ClipboardManager {
+            var value: AnnotatedString? = null
+            override fun getText(): AnnotatedString? = value
+            override fun setText(annotatedString: AnnotatedString) { value = annotatedString }
+        }
+        val uri = object : UriHandler {
+            override fun openUri(uri: String) { throw IllegalArgumentException("No activity found") }
+        }
+        compose.setContent { CompositionLocalProvider(LocalUriHandler provides uri, LocalClipboardManager provides clipboard) { MuralTheme {
+            AccountSheet(member.copy(notice = AccountNotice.APPLE_DELETION), {}, {}, {}, {}, {})
+        } } }
+        compose.onNodeWithTag("account-deletion-support").performScrollTo().performClick()
+        compose.onNodeWithTag("account-deletion-email").performClick()
+        compose.onNodeWithTag("account-deletion-open-failed").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("account-deletion-web").performScrollTo().performClick()
+        compose.onNodeWithTag("account-deletion-open-failed").assertExists()
+        compose.onNodeWithTag("account-deletion-copy-email").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("hi@hackmamba.io", clipboard.value?.text) }
+        compose.onNodeWithText(context.getString(R.string.account_deletion_email_copied)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.account_deleted)).assertDoesNotExist()
+    }
+
+    @Test fun deletionSupportCanBeRequestedBeforeAnAutomaticAttemptAndClosesOnAccountChange() {
+        var deletions = 0
+        val state = mutableStateOf(member)
+        compose.setContent { MuralTheme { AccountSheet(state.value, {}, {}, {}, { deletions++ }, {}) } }
+        compose.onNodeWithText(context.getString(R.string.account_delete)).performScrollTo().performClick()
+        compose.onNodeWithTag("account-request-deletion").performClick()
+        compose.onNodeWithTag("account-deletion-request").assertExists()
+        compose.onNodeWithTag("account-confirm-delete").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(0, deletions); state.value = AccountState(googleAvailable = true) }
+        compose.onNodeWithTag("account-deletion-request").assertDoesNotExist()
+        compose.onNodeWithTag("account-deletion-support").assertDoesNotExist()
+    }
+
+    @Test fun anEmptyAccountStillUsesConfirmedAutomaticDeletion() {
+        var deletions = 0
+        compose.setContent { MuralTheme {
+            AccountSheet(member.copy(minutes = MinuteBalance("milliseconds", "connected-conversation-time", 0, 0, 0)),
+                {}, {}, {}, { deletions++ }, {})
+        } }
+        compose.onNodeWithText(context.getString(R.string.account_delete)).performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(0, deletions) }
+        compose.onNodeWithTag("account-confirm-delete").performClick()
+        compose.runOnIdle { assertEquals(1, deletions) }
+        compose.onNodeWithTag("account-deletion-request").assertDoesNotExist()
     }
 }

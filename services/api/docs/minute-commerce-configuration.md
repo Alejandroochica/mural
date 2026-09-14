@@ -1,6 +1,6 @@
 # Minute commerce configuration reference
 
-`configuredMinuteCommerce(db, env, dependencies)` constructs optional minute payment services. It returns `undefined` when disabled. Construction reads only explicitly named files and saved receipt scopes; it makes no provider requests and starts no timers.
+`configuredMinuteCommerce(db, env, dependencies)` constructs optional AI-value payment services and historical minute reconciliation. It returns `undefined` when disabled. Construction reads only explicitly named files and saved receipt scopes; it makes no provider requests and starts no timers.
 
 ## Environment
 
@@ -34,7 +34,7 @@ The manifest contains `version: 1`, `environment: "test" | "live"`, at least one
 
 `chat.mural.android` is the permanent Play package. Each configured Play currency has an explicit exponent from 0 to 3. Catalog currency names use lowercase ISO-style three-letter identifiers.
 
-The catalog contains `{ "version": 1, "products": [...] }`. It has at most 100 products and no default price. Each product has exactly these fields:
+The active catalog contains `{ "version": 2, "products": [...] }`. It has at most 100 canonical `AIValueProduct` objects and no default price. Generate each product with `makeAIValueProduct` from `src/ai-value-purchases.ts`; do not manually calculate or insert the derived fields. Each product has exactly these fields:
 
 | Field | Accepted value |
 | --- | --- |
@@ -43,9 +43,29 @@ The catalog contains `{ "version": 1, "products": [...] }`. It has at most 100 p
 | `merchant` | The pinned Stripe account ID or Play package |
 | `sku` | Server SKU, 1–128 characters using letters, numbers, `.`, `_`, `:`, `-` |
 | `providerProduct` | Actual Stripe Price ID or Play product ID, at most 200 characters |
-| `minutes` | Integer 1–1440 |
 | `currency` | Three lowercase letters |
 | `totalMinor` | Final provider charge in integer currency minor units, 1–100,000,000 |
+| `entitlementKind` | `ai_value` |
+| `billingBasis` | `actual-ai-usage` |
+| `estimate` | `true` |
+| `aiValueNanoUSD` | Positive decimal integer string; only this amount becomes usable AI value |
+| `estimatedMilliseconds` | Safe integer estimate computed from the allocation and pinned estimate rate |
+| `quote` | Exact object described below |
+
+The `quote` fields are:
+
+| Fields | Type and meaning |
+| --- | --- |
+| `policyVersion`, `serviceFeeBasisPoints` | Integers matching the current database policy when an order is created |
+| `aiValueMinor`, `serviceFeeMinor`, `processingEstimateMinor`, `processingBufferMinor`, `paymentFeeMinor`, `totalMinor` | Integer checkout-currency amounts; the factory verifies the complete arithmetic |
+| `currency`, `currencyExponent` | Lowercase currency and exponent 0–3 |
+| `processingRateBasisPoints`, `processingFixedMinor`, `processingBufferBasisPoints` | Reviewed channel/market assumptions; rate plus buffer must be below 10,000 basis points |
+| `exchangeRateNumerator`, `exchangeRateDenominator`, `exchangeRateVersion` | Positive decimal integer strings and an operator-reviewed version; USD major units per checkout-currency major unit |
+| `estimatedNanoUSDPerMinute`, `estimateRateVersion` | Positive decimal integer string and version for the displayed duration estimate |
+
+The factory input is `AIValueProductInput`: `provider`, `environment`, `merchant`, `sku`, `providerProduct`, `currency`, `currencyExponent`, `aiValueMinor`, `policyVersion`, `serviceFeeBasisPoints`, `processing: { rateBasisPoints, fixedMinor, bufferBasisPoints }`, `exchangeRate: { numerator, denominator, version }`, and `estimate: { nanoUSDPerMinute, rateVersion }`. USD requires exponent 2 and a 1:1 exchange rate. The application currently displays estimates using 100,000,000 nano-USD per minute; use the matching reviewed rate/version for the catalog or update both together.
+
+Version 1 retains the historical `minutes` integer field instead of AI entitlement and quote fields. It is accepted only with sales disabled. Enabling version 1 sales fails configuration validation; historical fixed-minute test products must never become launch offers.
 
 Product identifiers begin with a letter or number. Duplicate SKU bindings and duplicate provider-product/currency bindings are rejected. Sales require a nonempty catalog. Provider fulfillment compares the saved final amount, product, quantity and currency against authoritative provider state. The approved digest covers whitespace as well as product values. Historical orders retain their own immutable quotes after catalog changes.
 
@@ -59,7 +79,7 @@ The Play binding file contains exactly `{ "key": "<base64>" }`, encoding 32 byte
 
 ## Service and runner interface
 
-The configured return value contains `purchases`, optional `stripe` and `play`, `vault`, `worker`, `runner`, `environment`, `salesEnabled`, and `catalogSHA256`. These objects match the existing HTTP commerce service interface. No credentials are returned as plain configuration fields.
+The configured return value contains `purchases` for historical minute reconciliation, `aiPurchases` for AI-value offers and accounting, `fulfillment` for verified entitlement routing, optional `stripe` and `play`, `vault`, `worker`, `runner`, `environment`, `salesEnabled`, and `catalogSHA256`. Pass the complete return value to `createApp` as `minuteCommerce`. No credentials are returned as plain configuration fields.
 
 Optional injected dependencies are `stripeTransport`, `playTransport`, `request` for Google HTTP/OAuth, and `onFailure`. Tests can supply transports without contacting providers. Configuration files remain required when transports are injected.
 

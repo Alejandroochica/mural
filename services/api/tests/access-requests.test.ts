@@ -91,7 +91,7 @@ integration('invalid schema, consent, source, JSON, media type and oversized bod
       { ...body(), email: ['a@example.com'] }, { ...body(), website: 123 }, [], null]) {
       const response = await service.inject({ method: 'POST', url: '/v1/access-requests', headers: headers(), payload: JSON.stringify(payload) });
       assert.equal(response.statusCode, 400);
-      assert.ok(!response.body.includes('example.com'));
+      assert.deepEqual(response.json(), { error: { code: 'invalid_access_request' } });
     }
     assert.equal((await service.inject({ method: 'POST', url: '/v1/access-requests', headers: headers(), payload: '{broken' })).statusCode, 400);
     assert.equal((await service.inject({ method: 'POST', url: '/v1/access-requests', headers: headers(), payload: JSON.stringify({ ...body(), email: 'x'.repeat(1500) }) })).statusCode, 413);

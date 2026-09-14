@@ -113,7 +113,7 @@ integration('Stripe checkout snapshots the server quote and persists its referen
   try {
     const account = await f.account(), order = await f.stripeOrder(account);
     const result = await f.stripe.checkout(account, order.orderID);
-    assert.equal(result.orderID, order.orderID); assert.match(result.checkoutURL, /^https:\/\/checkout.stripe.com\//);
+    assert.equal(result.orderID, order.orderID); assert.equal(new URL(result.checkoutURL).origin, 'https://checkout.stripe.com');
     assert.equal(await f.vault.read(order.orderID, f.stripe), f.stripeTransport.current.id);
     assert.equal((await f.db.query('SELECT state FROM minute_provider_jobs')).rows[0].state, 'pending');
     const call = f.stripeTransport.createCalls[0];

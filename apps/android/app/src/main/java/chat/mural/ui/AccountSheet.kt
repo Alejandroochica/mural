@@ -34,7 +34,8 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
                  onSelectProvider: (ConversationProvider) -> Unit = {},
                  onBuyMinutes: (() -> Unit)? = null,
                  guestMinutes: Long? = null, memberAlreadyClaimedTrial: Boolean = false) {
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable(state.accountID) { mutableStateOf(false) }
+    var requestDeletion by rememberSaveable(state.accountID) { mutableStateOf(false) }
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     val uri = LocalUriHandler.current
     val busy = state.busy || transitionBusy
@@ -105,6 +106,11 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
             if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = MuralColors.Ink, strokeWidth = 2.dp)
             state.notice?.let { Text(stringResource(it.textResource()), color = MuralColors.Secondary,
                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("account-notice")) }
+            if (!busy && state.signedIn && state.notice in listOf(AccountNotice.BILLING_UNRESOLVED, AccountNotice.APPLE_DELETION)) {
+                MuralTextButton(onClick = { requestDeletion = true }, modifier = Modifier.testTag("account-deletion-support")) {
+                    Text(stringResource(R.string.account_request_deletion), color = MuralColors.Ink)
+                }
+            }
             if (!busy) {
                 if (state.signedIn) {
                     OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth()) {
@@ -127,10 +133,19 @@ fun AccountSheet(state: AccountState, onDismiss: () -> Unit, onSignIn: () -> Uni
         confirmButton = { MuralTextButton(onClick = { confirmSignOut = false; onSignOut() }, enabled = !busy) { Text(stringResource(R.string.account_sign_out)) } },
         dismissButton = { MuralTextButton(onClick = { confirmSignOut = false }) { Text(stringResource(R.string.common_cancel)) } })
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
-        title = { Text(stringResource(R.string.account_delete)) }, text = { Text(stringResource(R.string.account_delete_detail)) },
+        title = { Text(stringResource(R.string.account_delete)) }, text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.account_delete_detail))
+                MuralTextButton(onClick = { confirmDelete = false; requestDeletion = true },
+                    modifier = Modifier.testTag("account-request-deletion")) {
+                    Text(stringResource(R.string.account_request_deletion), color = MuralColors.Ink)
+                }
+            }
+        },
         confirmButton = { MuralTextButton(onClick = { confirmDelete = false; onDelete() }, enabled = !busy,
             modifier = Modifier.testTag("account-confirm-delete")) { Text(stringResource(R.string.account_delete), color = MuralColors.Red) } },
         dismissButton = { MuralTextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.common_cancel)) } })
+    if (requestDeletion) AccountDeletionSupportDialog(onDismiss = { requestDeletion = false })
 }
 
 private fun AccountNotice.textResource() = when (this) {

@@ -187,6 +187,19 @@ class PlayStoreCaptureTest {
             assertTrue("$tag must show at least one complete line",
                 node.fetchSemanticsNode().boundsInRoot.height + 1 >= firstLineHeight)
         }
+        fun assertWholePassageReachable(scrollTag: String, captionTag: String) {
+            val passage = compose.onNodeWithTag(scrollTag)
+            val range = passage.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            if (range.maxValue() == 0f) {
+                // Wider/taller devices can show the entire translation without scrolling.
+                assertCaptionFullyVisible(captionTag)
+            } else {
+                passage.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, range.maxValue()) }
+                compose.waitForIdle()
+                val after = passage.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+                assertTrue("The end of $captionTag must be reachable", after.value() + 1f >= after.maxValue())
+            }
+        }
         assertFirstLineVisible("target-caption")
         assertFirstLineVisible("meaning-caption")
         val target = compose.onNodeWithTag("target-passage-scroll")
@@ -198,17 +211,11 @@ class PlayStoreCaptureTest {
         assertTrue("Meaning must stay above the floating navigation", meaningBounds.bottom < nav.top)
         capture("long-reply-with-meaning.png")
 
-        target.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
-        compose.waitForIdle()
-        assertTrue("The full target passage must be reachable",
-            target.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+        assertWholePassageReachable("target-passage-scroll", "target-caption")
         assertEquals("Scrolling the target must leave meaning in place", meaningBounds, translated.fetchSemanticsNode().boundsInRoot)
         assertFirstLineVisible("meaning-caption")
 
-        translated.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
-        compose.waitForIdle()
-        assertTrue("The full meaning must be reachable",
-            translated.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+        assertWholePassageReachable("meaning-passage-scroll", "meaning-caption")
         assertEquals(nav, compose.onNodeWithTag("floating-navigation").fetchSemanticsNode().boundsInRoot)
         assertControlFullyVisible("start-conversation")
         capture("long-reply-scrolled.png")
