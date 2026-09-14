@@ -614,7 +614,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun newSession(voice: Boolean, id: String = UUID.randomUUID().toString()) {
-        generation++; resetJob?.cancel(); assessmentJob?.cancel(); meanings.reset()
+        generation++; resetJob?.cancel(); assessmentJob?.cancel(); actionJob?.cancel(); working = false; meanings.reset()
         error = null; errorNeedsKeySetup = false; notice = null; isMuted = false
         voiceSession = voice; lastActivity = nowSeconds()
         val record = SessionRecord(id = id, languageID = language.id, themeID = selectedTheme?.id, title = selectedTheme?.title ?: language.defaultTitle)

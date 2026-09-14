@@ -353,7 +353,7 @@ fun TranscriptDialog(vm: MuralViewModel, session: SessionRecord, onDismiss: () -
                         }
                         SelectionContainer { Text(passage.text) }
                         if (liveSession.languageID == "zh") PinyinHelp(passage.text)
-                        if (passage.speaker == Speaker.user) MuralTextButton(onClick = { correcting = passage }) { Text(stringResource(R.string.history_edit_passage_button)) }
+                        if (passage.speaker == Speaker.user && !vm.isRunning) MuralTextButton(onClick = { correcting = passage }) { Text(stringResource(R.string.history_edit_passage_button)) }
                     }
                 }
                 liveSession.topics.flatMap { it.sources }.filter { it.safeUrl() != null }.takeIf { it.isNotEmpty() }?.let { sources ->
