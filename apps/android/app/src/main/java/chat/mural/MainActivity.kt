@@ -143,7 +143,7 @@ class MainActivity : ComponentActivity() {
             // AccountController rejects a different Google account before saving its bearer.
             val pendingOwner = vm.pendingMemberForSignIn()
             account.refreshAndWait()
-            if (pendingOwner == null && !vm.prepareForAccountChange()) return@launch
+            if (pendingOwner == null && !vm.prepareForSignIn()) return@launch
             account.signIn(expectedAccountID = pendingOwner) { nonce ->
                 try {
                     val option = GetSignInWithGoogleOption.Builder(config.googleServerClientID).setNonce(nonce).build()
@@ -157,7 +157,7 @@ class MainActivity : ComponentActivity() {
                 catch (error: CancellationException) { throw error }
                 catch (_: Exception) { throw AccountFailure.Google }
             }
-            if (pendingOwner != null && account.state.value.accountID == pendingOwner) vm.prepareForAccountChange()
+            if (pendingOwner != null && account.state.value.accountID == pendingOwner) vm.settleRenewedMember()
             if (account.state.value.signedIn) { vm.completeGuestSignIn(); account.refreshAndWait() }
             vm.refreshHostedReadiness()
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -169,7 +169,7 @@ class MainActivity : ComponentActivity() {
     private fun changeAccount(delete: Boolean) {
         if (changingAccount || account.state.value.busy) return
         val conversation = vm
-        account.changeAccount(delete, conversation::prepareForAccountChange, conversation::refreshHostedReadiness)
+        account.changeAccount(delete, conversation::prepareForAccountChange, conversation::refreshHostedReadiness, conversation::prepareGuestCustodyForDeletion)
         synchronizeAccountState()
     }
 
