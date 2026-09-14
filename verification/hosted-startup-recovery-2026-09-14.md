@@ -6,4 +6,6 @@ Bounded synthetic checks passed with the authorized server key: direct WebRTC cr
 
 The fix distinguishes definite startup rejections from uncertain outcomes, records limited diagnostics, and provides an audited operator recovery that keeps unknown provider liability. The integrated API suite passed 319 tests with zero skips against PostgreSQL. TypeScript checking passed. No Android application source or sealed version 4 artifact changed.
 
-Production rollout and a successful reviewer conversation remain necessary before the public Play submission. The prior failure has not been relabeled as a confirmed rejection.
+Backend commit 2958a48419c9f16a12df33e8fb86e3f78f2c983f was deployed with grant budgets preserved and paid access disabled. The reviewer hold was recovered without deducting minutes; its unknown provider liability remains recorded. Two subsequent Android conversations started and settled successfully, including a typed Spanish reply, a Spanish correction and English meaning. No pending reviewer reservation remained. A production rejected-start test also confirmed unchanged balance and no unresolved session.
+
+After explicit approval of the full ten-change bundle, Google Play confirmed version 4 and the accompanying release declarations are in review. Purchases remain disabled. The prior failure has not been relabeled as a confirmed rejection.
