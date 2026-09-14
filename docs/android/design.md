@@ -35,6 +35,7 @@ Both onboarding steps use dropdown menus over a softly moving warm background. C
 | stasel/WebRTC | webrtc-sdk for Android |
 | iOS recording permission | Runtime `RECORD_AUDIO` |
 | NaturalLanguage recognizer | `TextClassifier` language detection (Android 10+; skipped on older versions) |
+| `CFStringTokenizer` word readings for Mandarin | ICU word segmentation for caption links, and the ICU Han-Latin transform for pinyin (Android 10+; readings are omitted on older versions) |
 | File exporter and importer | Storage Access Framework, no broad storage permission |
 | Background events | `Activity.onStop` and resource cancellation |
 

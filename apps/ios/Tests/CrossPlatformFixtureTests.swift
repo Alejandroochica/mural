@@ -11,6 +11,22 @@ final class CrossPlatformFixtureTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
+    func testRedirectDecisionsMatchTheSharedCases() throws {
+        let data = try Data(contentsOf: directory.appendingPathComponent("redirect-cases.json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let cases = try XCTUnwrap(root["cases"] as? [[String: Any]])
+        XCTAssertFalse(cases.isEmpty)
+        for item in cases {
+            let languageID = try XCTUnwrap(item["language"] as? String)
+            let language = try XCTUnwrap(LanguageRegistry.module(for: languageID))
+            let detected = try XCTUnwrap(item["detected"] as? String)
+            let confidence = try XCTUnwrap(item["confidence"] as? Double)
+            let expected = try XCTUnwrap(item["redirect"] as? Bool)
+            XCTAssertEqual(TeachingPolicy.shouldRedirectSpeech(language: language, detectedLanguageID: detected, confidence: confidence),
+                           expected, "\(languageID) / \(detected) / \(confidence)")
+        }
+    }
+
     func testReencodedArchiveKeepsEveryFieldOfTheSharedFixture() throws {
         let data = try source()
         let archive = try Archive.decode(data)

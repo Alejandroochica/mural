@@ -155,12 +155,13 @@ fun TalkScreen(
         ) {
             Text(
                 if (passage == null) AnnotatedString(caption)
-                else captionLinks(caption) { word -> lookupWord = word; lookup = true; onLookup(word, caption) },
+                else captionLinks(caption, vm.language.id) { word -> lookupWord = word; lookup = true; onLookup(word, caption) },
                 style = if (passage == null) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().testTag("target-caption"),
             )
         }
+        if (vm.language.id == "zh") PinyinHelp(caption)
         if (vm.archive.preferences.meaningVisible) {
             Spacer(Modifier.height(10.dp))
             Column(
@@ -330,6 +331,7 @@ private fun LookupDialog(vm: MuralViewModel, sentence: String, initialWord: Stri
             Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(stringResource(R.string.talk_lookup_dialog_title), style = MaterialTheme.typography.headlineMedium)
                 MuralTextField(word, { word = it.take(100) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.talk_lookup_field_label)) })
+                if (vm.language.id == "zh") PinyinHelp(word)
                 vm.lookupResult?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     MuralTextButton(onClick = { vm.clearLookup(); onDismiss() }) { Text(stringResource(R.string.common_close)) }
