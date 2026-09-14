@@ -14,6 +14,7 @@ class CrossPlatformFixtureTest {
     @Test fun reencodedArchiveKeepsEveryFieldOfTheSharedFixture() {
         val reencoded = ArchiveCodec.encode(archive)
         assertEquals(fieldPaths(Json.parseToJsonElement(source)), fieldPaths(Json.parseToJsonElement(reencoded)))
+        assertEquals(content(Json.parseToJsonElement(source)), content(Json.parseToJsonElement(reencoded)))
         assertEquals(archive.sessions.map { it.passages }, ArchiveCodec.decode(reencoded).sessions.map { it.passages })
     }
 
@@ -54,6 +55,14 @@ class CrossPlatformFixtureTest {
             assertEquals(listOf(number("bars"), number("understandingCount"), number("independentCount"), number("lastSeen"), number("dueAt")),
                 listOf(w.bars.toDouble(), w.understandingCount.toDouble(), w.independentCount.toDouble(), w.lastSeen, w.dueAt))
         }
+    }
+
+    /** Values and collection sizes with null members removed and numbers compared numerically. */
+    private fun content(element: JsonElement): Any? = when (element) {
+        is JsonNull -> null
+        is JsonObject -> element.filterValues { it !is JsonNull }.mapValues { content(it.value) }.toSortedMap()
+        is JsonArray -> element.map { content(it) }
+        is JsonPrimitive -> if (element.isString) element.content else element.booleanOrNull ?: element.doubleOrNull ?: element.content
     }
 
     private fun fieldPaths(element: JsonElement, prefix: String = "", out: MutableSet<String> = sortedSetOf()): Set<String> {
