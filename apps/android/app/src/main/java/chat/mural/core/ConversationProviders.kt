@@ -69,6 +69,24 @@ object ConversationHistory {
     }
 }
 
+/** These exact responses are emitted before a provider request is admitted. Unknown outcomes stay one-shot. */
+object HostedHelperRetry {
+    fun canRetryAtBoundary(error: Throwable): Boolean = isConfirmedNotAdmitted(error) &&
+        (error as HostedFailure.Http).retryable != false
+
+    fun automaticDelay(error: Throwable): Long? {
+        if (!isConfirmedNotAdmitted(error)) return null
+        val failure = error as HostedFailure.Http
+        return failure.retryAfterMilliseconds?.takeIf { failure.status == 429 && failure.code == "helper_session_limit" && failure.retryable == true && it in 1000..60_000 }
+    }
+
+    fun isConfirmedNotAdmitted(error: Throwable): Boolean = error is HostedFailure.Http && when (error.status) {
+        429 -> error.code in setOf("helper_session_limit", "helper_concurrency_limit", "helper_budget_exhausted")
+        409 -> error.code in setOf("helper_session_window_closed", "helper_session_funding_unavailable")
+        else -> false
+    }
+}
+
 /** Main-dispatcher confined. No transcript or helper response is persisted by this controller. */
 class HostedConversationBindings(private val scope: CoroutineScope, private val now: () -> Long = System::currentTimeMillis) {
     class Lease(val serverID: String, val teaching: TeachingClient, val close: suspend () -> Unit,
@@ -113,7 +131,10 @@ class HostedConversationBindings(private val scope: CoroutineScope, private val 
         val binding = bindings[localID] ?: throw HostedFailure.Unavailable
         if (binding.disabled) throw HostedFailure.Unavailable
         val key = "${purpose.wireValue}:$logicalID"
-        binding.attempts[key]?.let { return deliver(it) }
+        binding.attempts[key]?.let {
+            try { return deliver(binding, key, it) }
+            catch (failure: Exception) { if (!HostedHelperRetry.isConfirmedNotAdmitted(failure)) throw failure }
+        }
         if (binding.attempts.size >= 128) throw HostedFailure.Unavailable
         val request = helpersScope.async(start = CoroutineStart.LAZY) {
             val ended = binding.endedAt
@@ -127,11 +148,17 @@ class HostedConversationBindings(private val scope: CoroutineScope, private val 
         val attempt = Attempt(request)
         binding.attempts[key] = attempt
         request.start()
-        return deliver(attempt)
+        return deliver(binding, key, attempt)
     }
 
-    private suspend fun deliver(attempt: Attempt): APIResult {
-        val result = attempt.result.await()
+    private suspend fun deliver(binding: Binding, key: String, attempt: Attempt): APIResult {
+        val result = try { attempt.result.await() }
+        catch (failure: Exception) {
+            // A concurrent waiter must not remove a later successful retry for this logical request.
+            if (HostedHelperRetry.isConfirmedNotAdmitted(failure) && binding.attempts[key] === attempt)
+                binding.attempts.remove(key)
+            throw failure
+        }
         return if (attempt.usageDelivered) result.copy(usage = APIUsage())
         else { attempt.usageDelivered = true; result }
     }

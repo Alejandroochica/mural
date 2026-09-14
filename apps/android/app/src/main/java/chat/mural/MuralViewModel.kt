@@ -140,7 +140,8 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private var resetJob: Job? = null
     private var assessmentJob: Job? = null
     private var actionJob: Job? = null
-    private val meanings = MeaningController(viewModelScope) { request ->
+    private val meanings = MeaningController(viewModelScope, canRetryFailure = HostedHelperRetry::canRetryAtBoundary,
+        retryDelay = HostedHelperRetry::automaticDelay) { request ->
         if (archive.preferences.aiConsentVersion != 1) throw IllegalStateException("AI processing consent is required.")
         val module = LanguageRegistry.get(request.learningLanguageID) ?: throw IllegalStateException("Unsupported language.")
         val result = teaching(request.sessionID, HelperPurpose.MEANING, request.cacheKey,
@@ -466,6 +467,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
             }
             val balance = hostedBalance(owner)
             if (balance.reservedMilliseconds != 0L) return false
+            guests?.recordSettledBalance(owner, balance)
             providerStore.clearPending()
             pendingHostedOwnerID = null; accountChangeBlocked = false
             readiness.refresh()
@@ -635,7 +637,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 hostedBindings.ended(it.id); reconcileHostedSessions(); finishHostedAssessment(clone(it))
             } else finalAssessments.submit(clone(it))
         }
-        scheduleTranslation()
+        scheduleTranslation(utteranceComplete = true)
         resetJob = viewModelScope.launch { delay(15000); if (state == "ended") resetConversation() }
     }
     private fun fail(message: String, needsKeySetup: Boolean = false) { finish(false); resetJob?.cancel(); state = "failed"; presentError(message, needsKeySetup) }
@@ -706,12 +708,12 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         s.outputTokens = (s.outputTokens.toLong() + usage.output).coerceAtMost(1_000_000_000).toInt()
         s.searchCalls = (s.searchCalls.toLong() + usage.searches).coerceAtMost(1_000_000_000).toInt()
     }
-    private fun scheduleTranslation() {
+    private fun scheduleTranslation(utteranceComplete: Boolean = state == "ended") {
         if (!archive.preferences.meaningVisible || archive.preferences.aiConsentVersion != 1) return
         val current = session ?: return
         val passage = current.passages.lastOrNull { it.speaker == Speaker.assistant } ?: return
         val request = MeaningRequest(current.id, passage, current.languageID, archive.preferences.meaningLanguage)
-        meanings.update(request, current.translations[request.cacheKey])
+        meanings.update(request, current.translations[request.cacheKey], utteranceComplete, conversationEnded = state == "ended")
     }
     fun retryMeaning() { scheduleTranslation(); meanings.retry() }
     private fun checkLanguage() {

@@ -67,7 +67,7 @@ try:
         'chat.mural.android.uitest.test/androidx.test.runner.AndroidJUnitRunner', check=False, timeout=120)
     (work/'capture-test.log').write_bytes(result.stdout + result.stderr)
     print(result.stdout.decode(), flush=True)
-    assert b'OK (4 tests)' in result.stdout, 'Capture and layout tests did not all pass.'
+    assert b'OK (5 tests)' in result.stdout, 'Capture and layout tests did not all pass.'
     for name in ['01-greeting.png','02-conversation.png','03-themes.png','04-words.png','05-languages.png','06-settings.png','feature-graphic.png']:
         output = output_root/'assets'/('' if name=='feature-graphic.png' else 'en-US')/name
         output.parent.mkdir(parents=True,exist_ok=True)

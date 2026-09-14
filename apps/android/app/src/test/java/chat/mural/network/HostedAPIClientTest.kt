@@ -263,4 +263,27 @@ class HostedAPIClientTest {
         try { api.createLiveSession(create); fail("oversized accepted") } catch (_: HostedFailure.InvalidResponse) {}
         assertEquals(1, server.requestCount)
     }
+    @Test fun safeRetryMetadataIsParsedWithoutRetryingTheHttpRequest() = runBlocking {
+        server.enqueue(MockResponse().setBody(created()))
+        val lease = api.createLiveSession(create).lease as HostedAPIClient.HostedLease
+        server.takeRequest()
+        val cases = listOf(
+            Triple("\"retryable\":true,\"retryAfterMilliseconds\":3000", true, 3000L),
+            Triple("\"retryable\":false", false, null),
+            Triple("\"retryable\":\"true\",\"retryAfterMilliseconds\":\"3000\"", null, null),
+            Triple("\"retryable\":true,\"retryAfterMilliseconds\":60001", true, null),
+            Triple("\"retryable\":true,\"retryAfterMilliseconds\":0", true, null)
+        )
+        for ((fields, retryable, wait) in cases) {
+            server.enqueue(MockResponse().setResponseCode(429).setBody("{\"error\":{\"code\":\"helper_session_limit\",$fields}}"))
+            try { lease.teaching.respond("policy", "input", purpose = HelperPurpose.MEANING); fail("denial accepted") }
+            catch (failure: HostedFailure.Http) {
+                assertEquals(429, failure.status); assertEquals("helper_session_limit", failure.code)
+                assertEquals(retryable, failure.retryable); assertEquals(wait, failure.retryAfterMilliseconds)
+            }
+            assertEquals("/v1/live/sessions/$sessionID/helpers", server.takeRequest().path)
+        }
+        assertEquals(1 + cases.size, server.requestCount)
+    }
+
 }

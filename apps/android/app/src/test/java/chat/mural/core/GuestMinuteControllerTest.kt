@@ -40,6 +40,23 @@ class GuestMinuteControllerTest {
     }
     private fun controller(store: Store, api: Service) = GuestMinuteController(store, api, { "i".repeat(43) }, { now })
 
+    @Test fun settledBalanceSurvivesCancelledRefreshAndCannotCrossAccounts() = runTest {
+        val store = Store(); val api = Service(); val subject = controller(store, api)
+        subject.acquire()
+        subject.recordSettledBalance(guest, MinuteBalance("milliseconds", "connected-conversation-time", 492_000, 0, 492_000))
+        api.failure = CancellationException("superseded readiness refresh")
+        try { subject.acquire(); fail("refresh was not cancelled") } catch (_: CancellationException) { }
+        assertEquals(GuestMinuteStatus.READY, subject.state.value.status)
+        assertEquals(492_000L, subject.state.value.remainingMilliseconds)
+        subject.recordSettledBalance(member, MinuteBalance("milliseconds", "connected-conversation-time", 1, 0, 1))
+        assertEquals(492_000L, subject.state.value.remainingMilliseconds)
+        api.failure = null
+        assertTrue(subject.linkTo(member))
+        subject.recordSettledBalance(guest, MinuteBalance("milliseconds", "connected-conversation-time", 600_000, 0, 600_000))
+        assertNotEquals(GuestMinuteStatus.READY, subject.state.value.status)
+        assertNull(subject.session())
+    }
+
     @Test fun freshGuestNeedsNoMemberAndResumesSameAllowanceAfterRestart() = runTest {
         val store = Store(); val api = Service(); val first = controller(store, api)
         assertTrue(first.acquire()); assertEquals(600_000L, first.state.value.remainingMilliseconds)

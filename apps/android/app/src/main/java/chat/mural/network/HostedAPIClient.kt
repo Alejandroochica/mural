@@ -1,6 +1,7 @@
 package chat.mural.network
 
 import android.content.Context
+import chat.mural.BuildConfig
 import chat.mural.core.AccountSession
 import chat.mural.core.SourceLink
 import chat.mural.core.LanguageRegistry
@@ -36,7 +37,8 @@ sealed class HostedFailure : Exception() {
     data object InvalidResponse : HostedFailure()
     data object Unavailable : HostedFailure()
     data object Unconfirmed : HostedFailure()
-    class Http(val status: Int, val code: String?) : HostedFailure()
+    class Http(val status: Int, val code: String?, val retryable: Boolean? = null,
+        val retryAfterMilliseconds: Long? = null) : HostedFailure()
 }
 
 data class HostedSessionStatus(val sessionID: String, val state: String, val deadlineMilliseconds: Long,
@@ -150,6 +152,14 @@ class HostedAPIClient internal constructor(
     }
 
     private suspend fun helper(accountID: String, sessionID: String, instructions: String, input: String,
+        schema: JsonObject?, search: Boolean, purpose: HelperPurpose): APIResult = try {
+        performHelper(accountID, sessionID, instructions, input, schema, search, purpose)
+    } catch (failure: Exception) {
+        if (BuildConfig.DEBUG) HostedHelperDiagnostics.report(purpose, failure)
+        throw failure
+    }
+
+    private suspend fun performHelper(accountID: String, sessionID: String, instructions: String, input: String,
         schema: JsonObject?, search: Boolean, purpose: HelperPurpose): APIResult {
         if (!validText(instructions, 16_384) || !validText(input, 24_576) ||
             (search && purpose !in listOf(HelperPurpose.DELEGATION, HelperPurpose.TOPIC)) ||
@@ -212,8 +222,11 @@ class HostedAPIClient internal constructor(
                         val result = response.use {
                             if (it.code != 200) {
                                 val error = runCatching { json.parseToJsonElement(readBounded(it)).jsonObject["error"] as? JsonObject }.getOrNull()
-                                val code = error?.string("code")?.takeIf { it in SAFE_ERROR_CODES }
-                                throw HostedFailure.Http(it.code, code)
+                                val code = safeErrorCode(error?.string("code"))
+                                val retryable = (error?.get("retryable") as? JsonPrimitive)?.takeUnless { value -> value.isString }?.booleanOrNull
+                                val wait = (error?.get("retryAfterMilliseconds") as? JsonPrimitive)?.takeUnless { value -> value.isString }
+                                    ?.longOrNull?.takeIf { value -> value in 1000..60_000 }
+                                throw HostedFailure.Http(it.code, code, retryable, wait)
                             }
                             transform(json.parseToJsonElement(readBounded(it)).jsonObject)
                         }
@@ -288,6 +301,7 @@ class HostedAPIClient internal constructor(
     }
 
     companion object {
+        internal fun safeErrorCode(value: String?): String? = value?.takeIf { it in SAFE_ERROR_CODES }
         private const val BILLING_BASIS = "connected-conversation-time"
         private val UUID_PATTERN = Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", RegexOption.IGNORE_CASE)
         private val SAFE_ERROR_CODES = setOf("sign_in_required", "hosted_voice_not_ready", "hosted_helpers_not_ready",

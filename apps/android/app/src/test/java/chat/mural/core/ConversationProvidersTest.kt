@@ -168,4 +168,74 @@ class ConversationProvidersTest {
         try { ConversationHistory.helperContext(session, session.passages.single()); fail("oversized target accepted") }
         catch (_: HostedFailure.InvalidRequest) {}
     }
+    @Test fun confirmedPreAdmissionDenialsAllowRetryOfTheSameLogicalMeaning() = runTest {
+        for ((status, code) in listOf(429 to "helper_session_limit", 429 to "helper_budget_exhausted",
+                429 to "helper_concurrency_limit", 409 to "helper_session_window_closed", 409 to "helper_session_funding_unavailable")) {
+            var calls = 0
+            val controller = HostedConversationBindings(backgroundScope)
+            controller.bind("local", "owner", lease(Teacher {
+                calls++; if (calls == 1) throw HostedFailure.Http(status, code) else response
+            }))
+            try { controller.respond("local", HelperPurpose.MEANING, "final-text", "policy", "input"); fail("denial accepted") }
+            catch (failure: HostedFailure.Http) { assertEquals(code, failure.code) }
+            assertEquals(response, controller.respond("local", HelperPurpose.MEANING, "final-text", "policy", "input"))
+            assertEquals(APIUsage(), controller.respond("local", HelperPurpose.MEANING, "final-text", "policy", "input").usage)
+            assertEquals(2, calls)
+        }
+    }
+
+    @Test fun discardedUIWaiterCanRetryADefinitiveRejectedAttemptButNotAnUnknownOne() = runTest {
+        for (confirmed in listOf(true, false)) {
+            var calls = 0
+            val pending = CompletableDeferred<APIResult>()
+            val controller = HostedConversationBindings(backgroundScope)
+            controller.bind("local", "owner", lease(Teacher { calls++; if (calls == 1) pending.await() else response }))
+            val waiter = launch { controller.respond("local", HelperPurpose.MEANING, "same", "policy", "input") }
+            runCurrent(); waiter.cancelAndJoin()
+            pending.completeExceptionally(HostedFailure.Http(if (confirmed) 429 else 502,
+                if (confirmed) "helper_session_limit" else "helper_response_uncertain")); runCurrent()
+            if (confirmed) assertEquals(response, controller.respond("local", HelperPurpose.MEANING, "same", "policy", "input"))
+            else {
+                try { controller.respond("local", HelperPurpose.MEANING, "same", "policy", "input"); fail("unknown repeated") }
+                catch (failure: HostedFailure.Http) { assertEquals("helper_response_uncertain", failure.code) }
+            }
+            assertEquals(if (confirmed) 2 else 1, calls)
+        }
+    }
+
+    @Test fun genericNetworkAndProviderErrorsRemainCachedAcrossRetry() = runTest {
+        for (failure in listOf(java.io.IOException("unknown transport outcome"), HostedFailure.InvalidResponse,
+                HostedFailure.Http(500, null), HostedFailure.Http(429, "unknown_limit"), HostedFailure.Http(502, "helper_output_incomplete"))) {
+            var calls = 0
+            val controller = HostedConversationBindings(backgroundScope)
+            controller.bind("local", "owner", lease(Teacher { calls++; throw failure }))
+            repeat(2) {
+                try { controller.respond("local", HelperPurpose.MEANING, "same", "policy", "input"); fail("unknown accepted") }
+                catch (error: Exception) {
+                    assertEquals(failure.javaClass, error.javaClass)
+                    if (failure is HostedFailure.Http) {
+                        assertEquals(failure.status, (error as HostedFailure.Http).status)
+                        assertEquals(failure.code, error.code)
+                    }
+                }
+            }
+            assertEquals(1, calls)
+        }
+    }
+
+    @Test fun automaticRetriesRequireExplicitBoundedPreAdmissionMetadata() {
+        assertEquals(3000L, HostedHelperRetry.automaticDelay(HostedFailure.Http(429, "helper_session_limit", true, 3000)))
+        for (failure in listOf(HostedFailure.Http(429, "helper_session_limit"),
+                HostedFailure.Http(429, "helper_session_limit", false, 3000),
+                HostedFailure.Http(429, "helper_session_limit", true, 99),
+                HostedFailure.Http(429, "helper_session_limit", true, 60001),
+                HostedFailure.Http(429, "unknown_limit", true, 3000),
+                HostedFailure.Http(429, "helper_budget_exhausted", true, 3000),
+                HostedFailure.Http(429, "helper_concurrency_limit", true, 3000),
+                HostedFailure.Http(502, "helper_response_uncertain", true, 3000),
+                HostedFailure.Http(409, "helper_request_already_attempted", true, 3000)))
+            assertNull(HostedHelperRetry.automaticDelay(failure))
+        assertFalse(HostedHelperRetry.canRetryAtBoundary(HostedFailure.Http(429, "helper_session_limit", false)))
+    }
+
 }

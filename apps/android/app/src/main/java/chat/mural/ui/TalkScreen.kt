@@ -1,6 +1,9 @@
 package chat.mural.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,12 +38,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.graphics.Brush
@@ -51,9 +58,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.window.Dialog
 import chat.mural.MuralViewModel
 import chat.mural.R
@@ -78,14 +88,25 @@ fun TalkScreen(
     val passage = assistantPassage?.text
     val caption = passage?.takeIf { it.isNotBlank() } ?: vm.language.greeting
     val busy = vm.state == "connecting" || vm.state == "closing"
+    val targetScroll = remember(assistantPassage?.id) { ScrollState(0) }
+    val meaningScroll = remember(assistantPassage?.id, vm.archive.preferences.meaningLanguage) { ScrollState(0) }
+    val textMeasurer = rememberTextMeasurer()
 
     BoxWithConstraints(Modifier.fillMaxSize().testTag("talk-screen")) {
     val scrollPage = LocalDensity.current.fontScale > 1.3f || maxHeight < 480.dp
     val compact = !scrollPage && maxHeight < 620.dp
+    val captionWidth = with(LocalDensity.current) { (maxWidth - 56.dp).roundToPx().coerceAtLeast(1) }
+    val longPassage = passage != null && !scrollPage && textMeasurer.measure(
+        caption, style = MaterialTheme.typography.headlineSmall,
+        constraints = Constraints(maxWidth = captionWidth),
+    ).lineCount > 2
+    val readingSpace by animateFloatAsState(
+        if (longPassage) 1f else 0f, spring(dampingRatio = 1f, stiffness = 260f), label = "passage reading space",
+    )
     val orbSize = when {
         scrollPage -> 170.dp
-        compact -> minOf(150.dp, maxHeight * .24f)
-        else -> 220.dp
+        compact -> minOf(150.dp, maxHeight * .24f) - 26.dp * readingSpace
+        else -> 220.dp - 64.dp * readingSpace
     }
     Column(
         Modifier
@@ -101,7 +122,7 @@ fun TalkScreen(
                 style = MaterialTheme.typography.labelMedium, color = MuralColors.Secondary,
             )
         }
-        Spacer(Modifier.height(if (compact) 8.dp else 24.dp))
+        Spacer(Modifier.height(if (compact) 8.dp else 24.dp - 16.dp * readingSpace))
         MuralOrb(
             energy = maxOf(vm.outputLevel.toFloat(), vm.inputLevel.toFloat() * .45f),
             listening = vm.state == "active" && vm.isVoiceSession && !vm.isMuted,
@@ -119,24 +140,34 @@ fun TalkScreen(
                 }
             }
         }
-        Spacer(Modifier.height(if (compact) 12.dp else 20.dp))
+        Spacer(Modifier.height(if (compact) 12.dp else 20.dp - 8.dp * readingSpace))
         Column(
-            // Captions get all flexible space. Competing weighted gaps previously reduced
-            // a short phone's greeting to half a line even at the standard font size.
-            modifier = (if (scrollPage) Modifier else Modifier.weight(1f).verticalScroll(rememberScrollState()))
+            // Each language keeps a share of the available space. A single scroller let
+            // long target-language replies push their meaning entirely below the viewport.
+            modifier = (if (scrollPage) Modifier else Modifier.weight(1f))
                 .fillMaxWidth().testTag("conversation-captions"),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-        Text(
-            if (passage == null) AnnotatedString(caption)
-            else captionLinks(caption) { word -> lookupWord = word; lookup = true; onLookup(word, caption) },
-            style = if (passage == null) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().testTag("target-caption"),
-        )
+        Box(
+            modifier = (if (scrollPage) Modifier else Modifier.weight(1f, fill = false).passageScroll(targetScroll))
+                .fillMaxWidth().testTag("target-passage-scroll"),
+        ) {
+            Text(
+                if (passage == null) AnnotatedString(caption)
+                else captionLinks(caption) { word -> lookupWord = word; lookup = true; onLookup(word, caption) },
+                style = if (passage == null) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().testTag("target-caption"),
+            )
+        }
         if (vm.archive.preferences.meaningVisible) {
             Spacer(Modifier.height(10.dp))
+            Column(
+                modifier = (if (scrollPage) Modifier else Modifier.weight(.72f, fill = false).passageScroll(meaningScroll))
+                    .fillMaxWidth().testTag("meaning-passage-scroll"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
             Text(
                 when {
                     passage == null -> chat.mural.core.MeaningLanguages.greeting(vm.archive.preferences.meaningLanguage)
@@ -152,11 +183,13 @@ fun TalkScreen(
                 Text(stringResource(R.string.talk_meaning_failed), color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall)
                 MuralTextButton(onClick = vm::retryMeaning) { Text(stringResource(R.string.talk_retry_meaning_button)) }
             }
+            }
         }
         vm.session?.passages?.lastOrNull { it.speaker == Speaker.user }?.let { user ->
             Row(Modifier.padding(top = 3.dp).testTag("user-caption"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.history_speaker_you), style = MaterialTheme.typography.labelSmall, color = MuralColors.Secondary)
-                Text(user.text.takeLast(160), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary, textAlign = TextAlign.Center)
+                Text(user.text.takeLast(160), style = MaterialTheme.typography.bodySmall, color = MuralColors.Secondary,
+                    textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (vm.session?.topics?.lastOrNull()?.sources?.isNotEmpty() == true) {
@@ -232,6 +265,25 @@ fun TalkScreen(
     if (lookup) LookupDialog(vm, caption, lookupWord, onLookup, onDismiss = { lookup = false; lookupWord = "" })
     transcript?.let { TranscriptDialog(vm, it, onDismiss = { transcript = null }) }
 }
+
+private fun Modifier.passageScroll(state: ScrollState): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        if (state.maxValue > 0 && size.height > 0) {
+            val fade = minOf(10.dp.toPx() / size.height, .15f)
+            drawRect(
+                Brush.verticalGradient(
+                    0f to if (state.value > 0) Color.Transparent else Color.Black,
+                    fade to Color.Black,
+                    (1f - fade) to Color.Black,
+                    1f to if (state.value < state.maxValue) Color.Transparent else Color.Black,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+    }
+    .verticalScroll(state)
 
 @Composable
 private fun RoundAction(symbol: MuralSymbol, label: String, selected: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {

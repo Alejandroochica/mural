@@ -82,6 +82,7 @@ class GuestMinuteController(
     suspend fun needsLink(): Boolean = lock.withLock { storage.read()?.session != null }
 
     suspend fun acquire(): Boolean = lock.withLock {
+        val previous = mutableState.value
         mutableState.value = mutableState.value.copy(status = GuestMinuteStatus.CHECKING)
         try {
             var stored = storage.read() ?: GuestInstallation(newInstallationToken()).also { storage.save(it) }
@@ -112,8 +113,16 @@ class GuestMinuteController(
                 GuestGrant.TemporarilyUnavailable -> { mutableState.value = GuestMinuteState(GuestMinuteStatus.UNAVAILABLE); false }
                 GuestGrant.SignInRequired -> { mutableState.value = GuestMinuteState(GuestMinuteStatus.SIGN_IN_REQUIRED); false }
             }
-        } catch (cancelled: CancellationException) { throw cancelled }
+        } catch (cancelled: CancellationException) { mutableState.value = previous; throw cancelled }
         catch (_: Exception) { mutableState.value = GuestMinuteState(GuestMinuteStatus.RETRY); false }
+    }
+
+    /** Retain an authoritative balance already fetched while closing this guest's conversation. */
+    suspend fun recordSettledBalance(owner: AccountSession, balance: MinuteBalance) = lock.withLock {
+        val stored = storage.read() ?: return@withLock
+        val guest = stored.session ?: return@withLock
+        if (stored.pendingMemberID != null || stored.linkedMemberID != null || guest.accountID != owner.accountID) return@withLock
+        ready(guest, balance.availableMilliseconds)
     }
 
     /** Call only after guest conversations settle. Member wallet credits are added by the server. */

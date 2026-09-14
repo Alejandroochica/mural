@@ -4,7 +4,9 @@ This directory prepares the **Android guest preview for adults 18+**. Eligible n
 
 | File | Purpose |
 | --- | --- |
-| [signed-candidate-2026-09-14.md](signed-candidate-2026-09-14.md) | Current signed AAB, certificate, test evidence and remaining release checks |
+| [signed-candidate-2026-09-14-v3.md](signed-candidate-2026-09-14-v3.md) | Current version 3 APK/AAB, full UI results, certificate and packaging checks |
+| [signed-candidate-2026-09-14-v2.md](signed-candidate-2026-09-14-v2.md) | Historical version 2 APK/AAB and packaging evidence |
+| [signed-candidate-2026-09-14.md](signed-candidate-2026-09-14.md) | Historical version 1 signed bundle and verification scope |
 | [preview-readiness-2026-09-13.md](preview-readiness-2026-09-13.md) | Earlier debug APK and its verification scope |
 | [candidate-audit-8768c86-2026-09-13.md](candidate-audit-8768c86-2026-09-13.md) | Historical unsigned candidate after the account lifecycle fixes; rebuild after later native changes |
 | [candidate-audit-2026-09-13.md](candidate-audit-2026-09-13.md) | Historical candidate before the account lifecycle fixes |

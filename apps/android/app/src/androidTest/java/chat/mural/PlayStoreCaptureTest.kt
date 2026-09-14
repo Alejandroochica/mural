@@ -16,6 +16,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -172,14 +173,58 @@ class PlayStoreCaptureTest {
         assertCaptionFullyVisible("meaning-caption")
     }
 
-    private fun showConversationFixture() {
+    @Test fun longSpanishReplyKeepsMeaningVisibleAndBothPassagesCanScroll() {
+        capture("long-reply-before-greeting.png")
+        val reply = "¡Hola, Alex! Me alegra saber que estás bien. Tu frase está muy bien; también podrías decir: «Hola, me llamo Alex y estoy bien». ¿De dónde eres?"
+        val meaning = "Hello, Alex! I'm glad you're well. Your sentence is very good; you could also say: “Hi, my name is Alex and I'm well.” Where are you from?"
+        showConversationFixture(reply, meaning)
+
+        fun assertFirstLineVisible(tag: String) {
+            val node = compose.onNodeWithTag(tag).assertIsDisplayed()
+            val layouts = mutableListOf<TextLayoutResult>()
+            node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val firstLineHeight = layouts.single().let { it.getLineBottom(0) - it.getLineTop(0) }
+            assertTrue("$tag must show at least one complete line",
+                node.fetchSemanticsNode().boundsInRoot.height + 1 >= firstLineHeight)
+        }
+        assertFirstLineVisible("target-caption")
+        assertFirstLineVisible("meaning-caption")
+        val target = compose.onNodeWithTag("target-passage-scroll")
+        val translated = compose.onNodeWithTag("meaning-passage-scroll")
+        val targetBounds = target.fetchSemanticsNode().boundsInRoot
+        val meaningBounds = translated.fetchSemanticsNode().boundsInRoot
+        val nav = compose.onNodeWithTag("floating-navigation").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("Target and meaning must have separate visible regions", targetBounds.bottom < meaningBounds.top)
+        assertTrue("Meaning must stay above the floating navigation", meaningBounds.bottom < nav.top)
+        capture("long-reply-with-meaning.png")
+
+        target.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
+        compose.waitForIdle()
+        assertTrue("The full target passage must be reachable",
+            target.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+        assertEquals("Scrolling the target must leave meaning in place", meaningBounds, translated.fetchSemanticsNode().boundsInRoot)
+        assertFirstLineVisible("meaning-caption")
+
+        translated.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
+        compose.waitForIdle()
+        assertTrue("The full meaning must be reachable",
+            translated.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+        assertEquals(nav, compose.onNodeWithTag("floating-navigation").fetchSemanticsNode().boundsInRoot)
+        assertControlFullyVisible("start-conversation")
+        capture("long-reply-scrolled.png")
+    }
+
+    private fun showConversationFixture(
+        reply: String = "Claro. ¿Lo quieres con leche?",
+        meaning: String = "Of course. Would you like it with milk?",
+    ) {
         val conversation = SessionRecord(languageID = "es", title = "Un café", fragments = mutableListOf(
             Fragment(speaker = Speaker.user, text = "Un café, por favor.", startMS = 0, endMS = 1800),
-            Fragment(speaker = Speaker.assistant, text = "Claro. ¿Lo quieres con leche?", startMS = 2400, endMS = 5100)))
+            Fragment(speaker = Speaker.assistant, text = reply, startMS = 2400, endMS = 5100)))
         compose.runOnIdle {
             vm.chooseTheme(vm.language.themes.first { it.id == "coffee" })
             fixtureState("session", conversation)
-            fixtureState("meaning", "Of course. Would you like it with milk?")
+            fixtureState("meaning", meaning)
             MuralViewModel::class.java.getDeclaredField("voiceSession").apply { isAccessible = true }.setBoolean(vm, true)
             fixtureState("state", "active")
             fixtureState("outputLevel", .16)
