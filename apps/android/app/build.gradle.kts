@@ -22,7 +22,7 @@ android {
         applicationId = "chat.mural.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
+        versionCode = 4
         versionName = "0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "MANAGED_API_ORIGIN", buildString(muralConfiguration("mural.apiOrigin")))
