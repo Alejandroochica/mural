@@ -66,7 +66,8 @@ try {
       await hostedHelpers.expireBudgets();
     }
     hosted = new HostedVoice(db, new OpenAILiveProvider(process.env.OPENAI_API_KEY ?? ''),
-      { accountAllowlist: accounts, billingUnit, lifetimeFundingCapNano,publicMinuteAccess,publicPaidAccess, helpers: hostedHelpers });
+      { accountAllowlist: accounts, billingUnit, lifetimeFundingCapNano,publicMinuteAccess,publicPaidAccess, helpers: hostedHelpers,
+        onStartupFailure: diagnostic => console.warn(JSON.stringify({ event: 'live_startup_failed', ...diagnostic })) });
     await hosted.start();
   }
   const accessConfig = accessRequestConfig(process.env);

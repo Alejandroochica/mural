@@ -8,7 +8,7 @@ import { appendEntry, paidAIBalance } from '../src/ledger.js';
 import { appendMinuteEntry } from '../src/minutes.js';
 import { HostedVoice } from '../src/hosted-voice.js';
 import { HostedHelpers, HOSTED_HELPER_MODEL, hostedHelperCost, type HostedResponsesTransport } from '../src/hosted-helpers.js';
-import type { LiveProvider, LiveContext, VoiceUsage } from '../src/live-provider.js';
+import { LiveCreateRejectedError, type LiveProvider, type LiveContext, type VoiceUsage } from '../src/live-provider.js';
 
 const databaseURL=process.env.TEST_DATABASE_URL;
 if (databaseURL && !new URL(databaseURL).pathname.endsWith('_test')) throw new Error('Dedicated test database required.');
@@ -24,11 +24,12 @@ async function until(predicate:()=>Promise<boolean>) {
   while(!await predicate()) {if(Date.now()>deadline) throw new Error('Condition timed out');await new Promise(resolve=>setTimeout(resolve,5));}
 }
 class Voice implements LiveProvider {
-  creates=0; closes=0; fails=false; contexts: (LiveContext|undefined)[]=[];
+  creates=0; closes=0; fails=false; rejection=false; contexts: (LiveContext|undefined)[]=[];
   listeners=new Map<string,(event:VoiceUsage)=>void>();
   async create(_sdp:string,_language:string,context?:LiveContext) {
     this.creates++;this.contexts.push(context);
     if(this.fails) throw new Error('Uncertain provider result');
+    if(this.rejection) throw new LiveCreateRejectedError(429, 'req_runtime_rejection');
     return {sessionID:`live_paid_${this.creates}`,sdp:'v=0\r\nanswer'};
   }
   async attach(id:string,listener:(event:VoiceUsage)=>void) {this.listeners.set(id,listener);return {closeSession:()=>{this.closes++;},disconnect:()=>{this.listeners.delete(id);}};}
@@ -244,6 +245,14 @@ integration('the restricted runtime settles paid helpers while provenance and fu
     await f.controller.stop();
     hosted=new HostedVoice(runtime,f.voice,{accountAllowlist:new Set(),lifetimeFundingCapNano:0n,billingUnit:'milliseconds',publicMinuteAccess:true,publicPaidAccess:true,helpers:gateway});
     await hosted.start();
+    f.voice.rejection=true;
+    const before=await f.balance();
+    await assert.rejects(hosted.create(f.account,randomUUID(),'v=0','es-ES'),{code:'provider_create_rejected'});
+    assert.deepEqual(await f.balance(),before);await f.invariant();
+    const rejected=(await db!.query('SELECT * FROM hosted_sessions WHERE provider_rejection_status IS NOT NULL')).rows[0];
+    assert.equal(rejected.provider_rejection_status,429);assert.equal(rejected.state,'closed');
+    assert.equal((await db!.query('SELECT cash_pool_nano FROM hosted_helper_sessions WHERE session_id=$1',[rejected.id])).rows[0].cash_pool_nano,'0');
+    f.voice.rejection=false;
     const session=await hosted.create(f.account,randomUUID(),'v=0\r\npaid-runtime','es-ES',undefined,60_000);
     const request=input();await gateway.request(f.account,session.sessionID,request);await f.invariant();
     await assert.rejects(runtime.query('UPDATE wallets SET cash_provenance_verified=true'),/permission denied/);
