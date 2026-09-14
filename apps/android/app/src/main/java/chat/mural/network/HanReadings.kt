@@ -6,14 +6,24 @@ import android.icu.util.ULocale
 import android.os.Build
 import chat.mural.core.HanReader
 import chat.mural.core.HanWords
+import chat.mural.core.MandarinPronunciationToken
+import chat.mural.core.MandarinPhraseReadings
 
 /**
- * Segments Chinese text with the platform dictionary and reads words with ICU's Han-Latin transform (Android 10+).
- * The transform reads character by character, so common words whose reading depends on the word carry their own entry.
+ * Segments caption links with ICU. On Android 10+, offline phrase readings resolve common polyphones
+ * before the character transform is considered. Unresolved common polyphones keep their Han text.
  */
 class IcuHanReader : HanReader {
-    private val transliterator: Transliterator? =
+    // Each background reader owns its ICU instance; Transliterator is mutable.
+    private val transliterator = ThreadLocal.withInitial {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Transliterator.getInstance("Han-Latin") else null
+    }
+
+    override fun pronunciationTokens(text: String): List<MandarinPronunciationToken> {
+        val segments = words(text)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return segments.map { MandarinPronunciationToken(it, null) }
+        return MandarinPhraseReadings.tokens(segments, WORD_READINGS, ::reading)
+    }
 
     override fun words(text: String): List<String> {
         val iterator = BreakIterator.getWordInstance(ULocale.CHINA)
@@ -25,14 +35,18 @@ class IcuHanReader : HanReader {
             pieces += text.substring(start, end)
             start = end; end = iterator.next()
         }
-        return HanWords.merge(pieces, WORD_READINGS.keys)
+        return HanWords.merge(pieces, CAPTION_WORDS)
     }
 
-    /** Syllables of a two-character word are joined like a dictionary reading; longer segments keep ICU's syllable spacing. */
+    /** Prefer a word reading; use ICU only when a known ambiguous character does not need context. */
     override fun reading(word: String): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         WORD_READINGS[word]?.let { return it }
-        val latin = transliterator?.transliterate(word)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        MandarinPhraseReadings.reading(word)?.let { return it }
+        if (MandarinPhraseReadings.isAmbiguous(word)) return null
+        // These everyday polyphones need a word/phrase entry. A character transform cannot choose their sense.
+        if (word.any { it in "行重长長还還教着著得乐樂便藏朝传傳数數调調相为為参參薄降难難处處只隻空少好干乾" }) return null
+        val latin = transliterator.get()?.transliterate(word)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         return if (word.codePointCount(0, word.length) <= 2) latin.replace(" ", "") else latin
     }
 
@@ -54,6 +68,9 @@ class IcuHanReader : HanReader {
             "没事儿" to "méishìr", "鸟儿" to "niǎor", "小孩儿" to "xiǎoháir", "女孩儿" to "nǚháir", "男孩儿" to "nánháir",
             "聊天儿" to "liáotiānr", "好玩儿" to "hǎowánr", "画儿" to "huàr", "味儿" to "wèir", "空儿" to "kòngr",
             "东西南北" to "dōngxīnánběi",
+            "长高" to "zhǎng gāo", "長高" to "zhǎng gāo", "长得" to "zhǎng de", "長得" to "zhǎng de",
+            "教我" to "jiāo wǒ", "教你" to "jiāo nǐ", "教他" to "jiāo tā", "教她" to "jiāo tā",
+            "教我们" to "jiāo wǒmen", "教我們" to "jiāo wǒmen",
             "銀行" to "yínháng", "音樂" to "yīnyuè", "音樂會" to "yīnyuèhuì", "長城" to "chángchéng", "覺得" to "juéde",
             "睡覺" to "shuìjiào", "頭髮" to "tóufa", "認為" to "rènwéi", "以為" to "yǐwéi", "成為" to "chéngwéi",
             "作為" to "zuòwéi", "乾淨" to "gānjìng", "一隻" to "yīzhī", "愛好" to "àihào", "了解" to "liǎojiě",
@@ -64,5 +81,8 @@ class IcuHanReader : HanReader {
             "事兒" to "shìr", "沒事兒" to "méishìr", "鳥兒" to "niǎor", "小孩兒" to "xiǎoháir", "女孩兒" to "nǚháir",
             "男孩兒" to "nánháir", "聊天兒" to "liáotiānr", "好玩兒" to "hǎowánr", "畫兒" to "huàr", "味兒" to "wèir",
         )
+        private val CAPTION_WORDS = WORD_READINGS.keys - setOf("长高", "長高", "长得", "長得",
+            "教我", "教你", "教他", "教她", "教我们", "教我們")
+
     }
 }

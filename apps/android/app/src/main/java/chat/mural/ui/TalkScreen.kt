@@ -83,6 +83,7 @@ fun TalkScreen(
     var typing by rememberSaveable { mutableStateOf(false) }
     var lookup by rememberSaveable { mutableStateOf(false) }
     var lookupWord by rememberSaveable { mutableStateOf("") }
+    var lookupSentence by rememberSaveable { mutableStateOf("") }
     var transcript by remember { mutableStateOf<SessionRecord?>(null) }
     val assistantPassage = vm.session?.passages?.lastOrNull { it.speaker == Speaker.assistant }
     val passage = assistantPassage?.text
@@ -101,7 +102,7 @@ fun TalkScreen(
         constraints = Constraints(maxWidth = captionWidth),
     ).lineCount > 2
     val readingSpace by animateFloatAsState(
-        if (longPassage) 1f else 0f, spring(dampingRatio = 1f, stiffness = 260f), label = "passage reading space",
+        if (longPassage || (vm.language.id == "zh" && chat.mural.core.MandarinPinyin.containsHan(caption))) 1f else 0f, spring(dampingRatio = 1f, stiffness = 260f), label = "passage reading space",
     )
     val orbSize = when {
         scrollPage -> 170.dp
@@ -149,19 +150,23 @@ fun TalkScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-        Box(
+        Column(
             modifier = (if (scrollPage) Modifier else Modifier.weight(1f, fill = false).passageScroll(targetScroll))
                 .fillMaxWidth().testTag("target-passage-scroll"),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 if (passage == null) AnnotatedString(caption)
-                else captionLinks(caption, vm.language.id) { word -> lookupWord = word; lookup = true; onLookup(word, caption) },
+                else captionLinks(caption, vm.language.id) { word ->
+                    vm.clearLookup(); lookupWord = word; lookupSentence = caption
+                    lookup = true; onLookup(word, caption)
+                },
                 style = if (passage == null) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineSmall,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().testTag("target-caption"),
             )
+            if (vm.language.id == "zh") PinyinHelp(caption)
         }
-        if (vm.language.id == "zh") PinyinHelp(caption)
         if (vm.archive.preferences.meaningVisible) {
             Spacer(Modifier.height(10.dp))
             Column(
@@ -263,7 +268,8 @@ fun TalkScreen(
     }
 
     if (typing) TypedReplySheet(vm.language.name, vm.working, onSendTyped, onDismiss = { typing = false })
-    if (lookup) LookupDialog(vm, caption, lookupWord, onLookup, onDismiss = { lookup = false; lookupWord = "" })
+    if (lookup) WordLookupSheet(lookupWord, lookupSentence, vm.language.id, vm.lookupResult, vm.lookupError, vm.lookupLoading,
+        onDismiss = { vm.clearLookup(); lookup = false; lookupWord = "" })
     transcript?.let { TranscriptDialog(vm, it, onDismiss = { transcript = null }) }
 }
 
@@ -323,24 +329,6 @@ internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (St
     }
 }
 
-@Composable
-private fun LookupDialog(vm: MuralViewModel, sentence: String, initialWord: String, onLookup: (String, String) -> Unit, onDismiss: () -> Unit) {
-    var word by rememberSaveable { mutableStateOf(initialWord) }
-    Dialog(onDismissRequest = { vm.clearLookup(); onDismiss() }) {
-        Surface(shape = RoundedCornerShape(28.dp), color = MuralColors.Surface) {
-            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(stringResource(R.string.talk_lookup_dialog_title), style = MaterialTheme.typography.headlineMedium)
-                MuralTextField(word, { word = it.take(100) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.talk_lookup_field_label)) })
-                if (vm.language.id == "zh") PinyinHelp(word)
-                vm.lookupResult?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    MuralTextButton(onClick = { vm.clearLookup(); onDismiss() }) { Text(stringResource(R.string.common_close)) }
-                    Button(onClick = { onLookup(word.trim(), sentence) }, enabled = word.isNotBlank() && !vm.working) { Text(stringResource(R.string.talk_lookup_button_action)) }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun statusText(state: String, muted: Boolean, voice: Boolean) = when (state) {

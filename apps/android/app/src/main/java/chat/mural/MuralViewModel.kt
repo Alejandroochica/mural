@@ -66,6 +66,10 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     var outputLevel by mutableStateOf(0.0); private set
     var selectedTheme by mutableStateOf<ConversationTheme?>(null); private set
     var lookupResult by mutableStateOf<String?>(null); private set
+    var lookupError by mutableStateOf<String?>(null); private set
+    var lookupLoading by mutableStateOf(false); private set
+    private var lookupGeneration = 0L
+    private var lookupJob: Job? = null
     var topicResult by mutableStateOf<TopicBrief?>(null); private set
     var hasKey by mutableStateOf(false); private set
     val language get() = LanguageRegistry.get(archive.preferences.learningLanguageID)!!
@@ -545,7 +549,11 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissError() { error = null; errorNeedsKeySetup = false }
-    fun clearLookup() { lookupResult = null }
+    fun clearLookup() {
+        lookupGeneration++
+        lookupJob?.cancel()
+        lookupJob = null; lookupResult = null; lookupError = null; lookupLoading = false
+    }
     fun saveKey(key: String) {
         if (isRunning) return
         try { credentials.save(key); hasKey = credentials.hasKey; selectConversationProvider(ConversationProvider.PERSONAL_KEY); recoverFinalAssessments(); notice = getApplication<Application>().getString(R.string.notice_key_saved) }
@@ -561,7 +569,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (isRunning || !storageReady) return
         if (LanguageRegistry.get(preferences.learningLanguageID) == null || preferences.meaningLanguage !in MeaningLanguages.all || preferences.sessionMinutes !in 1..60) return
         val languageChanged = preferences.learningLanguageID != language.id
-        actionJob?.cancel(); working = false
+        actionJob?.cancel(); clearLookup(); working = false
         if (preferences.aiConsentVersion != 1) {
             finalAssessments.cancelAll(); hostedBindings.disableHelpers()
             hostedFinalAssessmentJobs.values.toList().forEach { it.cancel() }; hostedFinalAssessmentJobs.clear()
@@ -614,7 +622,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun newSession(voice: Boolean, id: String = UUID.randomUUID().toString()) {
-        generation++; resetJob?.cancel(); assessmentJob?.cancel(); actionJob?.cancel(); working = false; meanings.reset()
+        generation++; resetJob?.cancel(); assessmentJob?.cancel(); actionJob?.cancel(); clearLookup(); working = false; meanings.reset()
         error = null; errorNeedsKeySetup = false; notice = null; isMuted = false
         voiceSession = voice; lastActivity = nowSeconds()
         val record = SessionRecord(id = id, languageID = language.id, themeID = selectedTheme?.id, title = selectedTheme?.title ?: language.defaultTitle)
@@ -680,7 +688,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (state !in listOf("active", "connecting")) return
         val connecting = state == "connecting"
         state = "closing"; isMuted = true
-        connectionJob?.cancel(); durationJob?.cancel(); assessmentJob?.cancel(); actionJob?.cancel()
+        connectionJob?.cancel(); durationJob?.cancel(); assessmentJob?.cancel(); actionJob?.cancel(); clearLookup()
         delegations.values.toList().forEach { it.cancel() }; delegations.clear(); working = false
         updateSession { it.endReason = reason }
         if (!voiceSession || connecting) { finish(false); return }
@@ -689,13 +697,13 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun background() {
         // Leaving the foreground ends the conversation and releases the microphone; its final assessment still completes.
-        generation++; actionJob?.cancel(); meanings.reset(); working = false
+        generation++; actionJob?.cancel(); clearLookup(); meanings.reset(); working = false
         if (isRunning) { updateSession { it.endReason = "App moved to background" }; finish(false) }
     }
     private fun finish(final: Boolean) {
         if (!isRunning) return
         connectionJob?.cancel(); durationJob?.cancel(); closeJob?.cancel(); assessmentJob?.cancel()
-        actionJob?.cancel(); languageCheckJob?.cancel()
+        actionJob?.cancel(); clearLookup(); languageCheckJob?.cancel()
         delegations.values.toList().forEach { it.cancel() }; delegations.clear()
         transport.disconnect(); inputLevel = 0.0; outputLevel = 0.0; working = false; isMuted = false
         updateSession { it.endedAt = nowSeconds(); it.usageFinal = final }
@@ -712,7 +720,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private fun fail(e: Throwable, @StringRes fallback: Int) { fail(resolveMessage(e, fallback), errorNeedsKeySetup(e)) }
     fun resetConversation() {
         if (isRunning) return
-        generation++; resetJob?.cancel(); actionJob?.cancel(); assessmentJob?.cancel(); languageCheckJob?.cancel(); meanings.reset()
+        generation++; resetJob?.cancel(); actionJob?.cancel(); clearLookup(); assessmentJob?.cancel(); languageCheckJob?.cancel(); meanings.reset()
         session = null; selectedTheme = null; topicResult = null
         notice = null; working = false; state = "idle"; voiceSession = false
     }
@@ -924,18 +932,22 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun lookup(word: String, sentence: String) {
-        if (!cloudReady() || working || word.isBlank()) return
-        val token = generation; val id = session?.id; working = true; lookupResult = null
-        actionJob = viewModelScope.launch {
+        if (!cloudReady() || word.isBlank()) return
+        clearLookup()
+        val token = generation; val id = session?.id; val request = lookupGeneration
+        lookupLoading = true
+        lookupJob = viewModelScope.launch {
             try {
                 val result = teaching(id, HelperPurpose.LOOKUP, UUID.randomUUID().toString(),
                     TeachingPolicy.lookup(language, archive.preferences.meaningLanguage), "Selected: ${word.take(200)}\nSentence: ${sentence.take(2200)}")
-                if (token != generation) return@launch
+                if (token != generation || request != lookupGeneration) return@launch
                 lookupResult = result.text
                 if (session?.id == id) updateSession { addUsage(it, result.usage) }
             } catch (_: CancellationException) { }
-            catch (e: Exception) { presentError(e, R.string.error_lookup_word_failed) }
-            finally { if (token == generation) working = false }
+            catch (e: Exception) {
+                if (token == generation && request == lookupGeneration) lookupError = resolveMessage(e, R.string.error_lookup_word_failed)
+            }
+            finally { if (request == lookupGeneration) lookupLoading = false }
         }
     }
     fun currentTopic(query: String) {

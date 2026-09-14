@@ -11,6 +11,10 @@ interface HanReader {
 
     /** A Latin transcription of one word, or null when the platform has none. */
     fun reading(word: String): String?
+
+    /** Pronunciation may use a phrase spanning several caption words without changing their tap targets. */
+    fun pronunciationTokens(text: String): List<MandarinPronunciationToken> =
+        words(text).map { MandarinPronunciationToken(it, if (MandarinPinyin.containsHan(it)) reading(it) else null) }
 }
 
 object MandarinPinyin {
@@ -19,10 +23,11 @@ object MandarinPinyin {
     /** Punctuation, spacing and unrecognized characters remain exactly as supplied. */
     fun tokens(text: String, reader: HanReader? = this.reader): List<MandarinPronunciationToken> {
         if (text.isEmpty()) return emptyList()
-        val words = words(text, reader) ?: return listOf(MandarinPronunciationToken(text, null))
-        return words.map { word ->
-            val latin = if (containsHan(word)) reader?.reading(word)?.let(::normalize) else null
-            MandarinPronunciationToken(word, latin?.takeIf { it.isNotEmpty() && !containsHan(it) })
+        val tokens = reader?.pronunciationTokens(text)?.takeIf { it.joinToString("") { part -> part.text } == text }
+            ?: return listOf(MandarinPronunciationToken(text, null))
+        return tokens.map { part ->
+            val latin = part.pinyin?.let(::normalize)
+            part.copy(pinyin = latin?.takeIf { it.isNotEmpty() && !containsHan(it) })
         }
     }
 
