@@ -21,6 +21,25 @@ final class LearningTests: XCTestCase {
         let f = [Fragment(id: "a", speaker: .assistant, text: "Hva", startMS: 0, endMS: 100), Fragment(id: "b", speaker: .assistant, text: " gjorde du?", startMS: 100, endMS: 400)]
         XCTAssertEqual(Transcript.passages(f).first?.text, "Hva gjorde du?")
     }
+    func testConcatenationInsertsSpaceBetweenBareFragmentBoundaries() {
+        let f = [
+            Fragment(id: "a", speaker: .assistant, text: "It is easy.", startMS: 0, endMS: 100),
+            Fragment(id: "b", speaker: .assistant, text: "Now you?", startMS: 400, endMS: 700),
+        ]
+        XCTAssertEqual(Transcript.passages(f).first?.text, "It is easy. Now you?")
+        let punctuated = [
+            Fragment(id: "c", speaker: .assistant, text: "Hei", startMS: 0, endMS: 100),
+            Fragment(id: "d", speaker: .assistant, text: "!", startMS: 100, endMS: 150),
+        ]
+        XCTAssertEqual(Transcript.passages(punctuated).first?.text, "Hei!")
+    }
+    func testJoinPreservesMandarinAndUnicodeBoundaries() {
+        XCTAssertEqual(Passage.join(["我", "喜欢", "咖啡。", "你呢？"]), "我喜欢咖啡。你呢？")
+        XCTAssertEqual(Passage.join(["“", "Hola", "!”"]), "“Hola!”")
+        XCTAssertEqual(Passage.join(["Hola", "\u{10100}"]), "Hola\u{10100}")
+        XCTAssertEqual(Passage.join(["Hola\u{00A0}", "mundo"]), "Hola\u{00A0}mundo")
+        XCTAssertEqual(Passage.join(["", "Hello.", "", "Again."]), "Hello. Again.")
+    }
     func testLateFragmentsRebuildEarlierPassageAndInvalidateEvidence() {
         var s = fixture()
         s.append(Fragment(id: "late", speaker: .user, text: " kanskje", startMS: 2100, endMS: 2500))
@@ -56,6 +75,20 @@ final class LearningTests: XCTestCase {
         XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words.count, 0)
         s = fixture(); s.assessments[0].words[0].quote = "Jeg kan fly."
         XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words.count, 0)
+    }
+    func testQuoteAcrossBareFragmentBoundaryIsKept() {
+        var session = SessionRecord(languageID: "es")
+        session.append(Fragment(id: "f1", speaker: .user, text: "Me gusta", startMS: 0, endMS: 500))
+        session.append(Fragment(id: "f2", speaker: .user, text: "el café", startMS: 600, endMS: 1200))
+        let passage = session.passages[0]
+        XCTAssertEqual(passage.text, "Me gusta el café")
+        session.assessments = [Assessment(
+            passageID: passage.id, revisionKey: passage.revisionKey, outcome: .success,
+            suggestedLevel: 1, nextGoal: "Sigue.", capability: "Expresses liking",
+            words: [WordProposal(lemma: "gustar", meaning: "to like", form: "gusta",
+                kind: .independent, confidence: 0.95, sourceIDs: ["f1", "f2"],
+                quote: "Me gusta el café", language: "es")])]
+        XCTAssertEqual(LearningEngine.validate(session.assessments[0], session: session)?.words.count, 1)
     }
     func testDuplicateAssessmentsNeverDoubleCredit() {
         var s = fixture(); s.assessments += s.assessments
