@@ -21,6 +21,25 @@ final class LearningTests: XCTestCase {
         let f = [Fragment(id: "a", speaker: .assistant, text: "Hva", startMS: 0, endMS: 100), Fragment(id: "b", speaker: .assistant, text: " gjorde du?", startMS: 100, endMS: 400)]
         XCTAssertEqual(Transcript.passages(f).first?.text, "Hva gjorde du?")
     }
+    func testConcatenationInsertsSpaceBetweenBareFragmentBoundaries() {
+        let f = [
+            Fragment(id: "a", speaker: .assistant, text: "It is easy.", startMS: 0, endMS: 100),
+            Fragment(id: "b", speaker: .assistant, text: "Now you?", startMS: 400, endMS: 700),
+        ]
+        XCTAssertEqual(Transcript.passages(f).first?.text, "It is easy. Now you?")
+        let punctuated = [
+            Fragment(id: "c", speaker: .assistant, text: "Hei", startMS: 0, endMS: 100),
+            Fragment(id: "d", speaker: .assistant, text: "!", startMS: 100, endMS: 150),
+        ]
+        XCTAssertEqual(Transcript.passages(punctuated).first?.text, "Hei!")
+    }
+    func testJoinPreservesMandarinAndUnicodeBoundaries() {
+        XCTAssertEqual(Passage.join(["我", "喜欢", "咖啡。", "你呢？"]), "我喜欢咖啡。你呢？")
+        XCTAssertEqual(Passage.join(["“", "Hola", "!”"]), "“Hola!”")
+        XCTAssertEqual(Passage.join(["Hola", "\u{10100}"]), "Hola\u{10100}")
+        XCTAssertEqual(Passage.join(["Hola\u{00A0}", "mundo"]), "Hola\u{00A0}mundo")
+        XCTAssertEqual(Passage.join(["", "Hello.", "", "Again."]), "Hello. Again.")
+    }
     func testLateFragmentsRebuildEarlierPassageAndInvalidateEvidence() {
         var s = fixture()
         s.append(Fragment(id: "late", speaker: .user, text: " kanskje", startMS: 2100, endMS: 2500))
