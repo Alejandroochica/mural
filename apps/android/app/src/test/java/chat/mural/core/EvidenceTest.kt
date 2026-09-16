@@ -46,4 +46,13 @@ class EvidenceTest {
         third.assessments = mutableListOf(third.assessments.single().copy(outcome=Outcome.breakdown))
         assertEquals(0,LearningEngine.project(listOf(first,second,third),"es").challenge)
     }
+    @Test fun invalidAssessmentDoesNotBlockALaterValidOneForTheSamePassage() {
+        val s = record()
+        val valid = s.assessments.single()
+        val invalid = valid.copy(revisionKey = "stale", createdAt = valid.createdAt - 1)
+        s.assessments = mutableListOf(invalid, valid)
+        val projection = LearningEngine.project(listOf(s), "es")
+        assertEquals(1, projection.observationCount)
+        assertEquals(1, projection.words.size)
+    }
 }
