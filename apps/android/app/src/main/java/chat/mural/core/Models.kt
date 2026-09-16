@@ -93,7 +93,15 @@ data class SessionRecord(
     fun correctFragment(id: String, text: String) {
         val i = fragments.indexOfFirst { it.id == id }; if (i < 0) return
         val f = fragments[i]; fragments[i] = f.copy(previousTexts = f.previousTexts + f.text, text = text, revision = f.revision + 1)
-        translations.clear(); invalidateChangedAssessments()
+        translations.keys.filter { translationKeyIncludesFragment(it, id) }.forEach { translations.remove(it) }
+        invalidateChangedAssessments()
+    }
+    companion object {
+        fun translationKeyIncludesFragment(key: String, id: String): Boolean {
+            val revision = key.substringAfter("::", missingDelimiterValue = "")
+            if (revision.isEmpty()) return false
+            return revision.split(',').any { part -> part.substringBefore(':') == id }
+        }
     }
 }
 @Serializable

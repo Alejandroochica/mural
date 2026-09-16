@@ -13,8 +13,11 @@ class EvidenceTest {
     }
     @Test fun correctionsRevokeEvidenceAndTranslationsKeepPreviousText() {
         val s = record(); s.translations["English::target:0"] = "the house"
+        s.translations["English::other:0"] = "unrelated"
         s.correctFragment("target", "la calle")
-        assertTrue(s.assessments.isEmpty()); assertTrue(s.translations.isEmpty())
+        assertTrue(s.assessments.isEmpty())
+        assertNull(s.translations["English::target:0"])
+        assertEquals("unrelated", s.translations["English::other:0"])
         assertEquals(listOf("la casa"), s.fragments.single().previousTexts)
         assertEquals(1, s.fragments.single().revision)
     }
