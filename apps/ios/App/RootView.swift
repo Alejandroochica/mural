@@ -14,6 +14,7 @@ struct RootView: View {
         }
         if let screen = ScreenshotPreview.screen { coordinator.prepareScreenshot(screen) }
         coordinator.prepareTypedReplyPreview()
+        coordinator.prepareConversationPolicyPreview()
         _tab = State(initialValue: ScreenshotPreview.tab)
         #endif
         _coordinator = State(initialValue: coordinator)
@@ -234,6 +235,7 @@ struct TypedReplyView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Say it your way.").font(.system(.title, design: .rounded, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                 TextField("Reply in \(coordinator.language.name) or another language", text: $text, axis: .vertical).lineLimit(3...6).focused($focused).padding(18).background(.white, in: RoundedRectangle(cornerRadius: 22)).accessibilityIdentifier("typed-reply-input")
+                    .onChange(of: text) { _, _ in coordinator.noteTypingActivity() }
                 if let error = coordinator.typedReplyError {
                     Text(error).font(.footnote).foregroundStyle(MuralColor.secondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("typed-reply-error")
                 }
@@ -248,6 +250,6 @@ struct TypedReplyView: View {
                 }
             }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-        }.presentationDetents([.medium, .large]).onAppear { coordinator.typedReplyError = nil; focused = true }
+        }.presentationDetents([.medium, .large]).onAppear { coordinator.typedReplyError = nil; coordinator.noteTypingActivity(); focused = true }
     }
 }

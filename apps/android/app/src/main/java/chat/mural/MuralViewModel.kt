@@ -212,7 +212,6 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private var lastLanguageRedirect: String? = null
     private val delegations = mutableMapOf<String, Job>()
     private var voiceSession = false
-    private var lastActivity = nowSeconds()
     private var activity = ConversationActivity(activityNow())
     private var conversationPace = ConversationPace()
     var inactivitySeconds by mutableStateOf<Int?>(null); private set
@@ -661,7 +660,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                         it.append(Fragment(speaker = Speaker.assistant, text = result.text, startMS = offset, endMS = offset + 1))
                         addUsage(it, result.usage)
                     }
-                    lastActivity = nowSeconds(); scheduleTranslation()
+                    scheduleTranslation()
                 } catch (_: CancellationException) { }
                 catch (e: Exception) { if (token == generation) presentError(e, R.string.error_help_failed) }
                 finally { if (token == generation) working = false }
@@ -672,7 +671,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private fun newSession(voice: Boolean, id: String = UUID.randomUUID().toString()) {
         generation++; resetJob?.cancel(); assessmentJob?.cancel(); actionJob?.cancel(); clearLookup(); working = false; meanings.reset()
         dismissError(); notice = null; isMuted = false
-        voiceSession = voice; lastActivity = nowSeconds()
+        voiceSession = voice
         val record = SessionRecord(id = id, languageID = language.id, themeID = selectedTheme?.id, title = selectedTheme?.title ?: language.defaultTitle)
         topicResult?.takeIf { it.languageID == language.id && selectedTheme?.id == "current" }?.let { record.topics += it }
         session = record; save(record)
@@ -834,7 +833,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                     notice = getApplication<Application>().getString(R.string.notice_time_limit_reached); end("Time limit"); break
                 }
                 inactivitySeconds = null
-                if (voiceSession) when (val next = activity.tick(activityNow(), isMuted, working)) {
+                if (voiceSession) when (val next = activity.tick(activityNow(), isMuted, working || delegations.isNotEmpty())) {
                     ConversationActivity.Action.CheckIn -> command("instructions", TeachingPolicy.checkIn(language))
                     is ConversationActivity.Action.Warning -> inactivitySeconds = next.seconds
                     ConversationActivity.Action.End -> { notice = getApplication<Application>().getString(R.string.notice_ended_inactivity); end("Inactivity"); break }
@@ -982,7 +981,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         val offset = ((nowSeconds() - session!!.startedAt) * 1000).toInt().coerceAtLeast(0)
         val fragment = Fragment(speaker = Speaker.user, text = clean, startMS = offset, endMS = offset + 1, meaningVisible = archive.preferences.meaningVisible, typed = true)
         val draft = clone(session!!).also { it.append(fragment) }
-        lastActivity = nowSeconds(); working = true
+        if (voiceSession) { activity.learnerEngaged(activityNow()); inactivitySeconds = null }; working = true
         actionJob = viewModelScope.launch {
             try {
                 val instructions = if (voiceSession) TeachingPolicy.typedReply(language) else TeachingPolicy.voice(language, learner, selectedTheme, archive.preferences.interests, archive.preferences.meaningLanguage) + "\n" + TeachingPolicy.typedReply(language)

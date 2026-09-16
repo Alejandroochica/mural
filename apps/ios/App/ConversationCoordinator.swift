@@ -318,7 +318,7 @@ import MuralCore
                     self.notice = "You’ve reached your conversation time limit."; self.end(reason: "Time limit"); return
                 }
                 self.inactivitySeconds = nil
-                switch self.activity.tick(now: self.activityNow, muted: self.isMuted, busy: self.working) {
+                switch self.activity.tick(now: self.activityNow, muted: self.isMuted, busy: self.working || !self.delegationTasks.isEmpty) {
                 case .checkIn: self.append("instructions", TeachingPolicy.checkIn(language: self.language))
                 case .warning(let seconds): self.inactivitySeconds = seconds
                 case .end:
@@ -386,6 +386,18 @@ import MuralCore
         guard typedReplyPreview else { return }
         session = SessionRecord(languageID: language.id)
         state = .active
+    }
+    func prepareConversationPolicyPreview() {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("--preview") else { return }
+        if args.contains("--preview-inactivity") || args.contains("--preview-inactivity-timer") {
+            prepareScreenshot(.conversation)
+            activity = ConversationActivity(now: activityNow - 25)
+            inactivitySeconds = 5
+            if args.contains("--preview-inactivity-timer") { startDurationChecks() }
+        } else if args.contains("--preview-provider-quota") {
+            error = ProviderFailure(status: 429, body: Data(#"{"error":{"code":"insufficient_quota","message":"private"}}"#.utf8), reference: "req_support_fixture").localizedDescription
+        }
     }
     func prepareScreenshot(_ screen: ScreenshotPreview.Screen) {
         store.selectLanguage("es")
@@ -491,6 +503,7 @@ import MuralCore
         let fragment = Fragment(speaker: .user, text: String(clean.prefix(2000)), startMS: offset, endMS: offset + 1,
                                 meaningVisible: store.preferences.meaningVisible, typed: true)
         draft.append(fragment)
+        activity.learnerEngaged(now: activityNow); inactivitySeconds = nil
         working = true
         defer { if session?.id == sessionID { working = false } }
         do {
@@ -506,7 +519,7 @@ import MuralCore
                 return false
             }
             session?.append(fragment)
-            lastActivity = .now
+            activity.learnerEngaged(now: activityNow); inactivitySeconds = nil
             #if DEBUG && targetEnvironment(simulator)
             if !typedReplyPreview { scheduleAssessment() }
             #else

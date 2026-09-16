@@ -272,7 +272,7 @@ fun TalkScreen(
     }
 
     if (typing) TypedReplySheet(vm.language.name, vm.working, onSendTyped, onDismiss = { typing = false },
-        error = vm.typedReplyError, completedSends = vm.typedRepliesSent, onOpen = vm::clearTypedReplyError)
+        error = vm.typedReplyError, completedSends = vm.typedRepliesSent, onOpen = { vm.clearTypedReplyError(); vm.noteTypingActivity() }, onTyping = vm::noteTypingActivity)
     if (lookup) WordLookupSheet(lookupWord, lookupSentence, vm.language.id, vm.lookupResult, vm.lookupError, vm.lookupLoading,
         onDismiss = { vm.clearLookup(); lookup = false; lookupWord = "" })
     transcript?.let { TranscriptDialog(vm, it, onDismiss = { transcript = null }) }
@@ -309,7 +309,7 @@ private fun RoundAction(symbol: MuralSymbol, label: String, selected: Boolean = 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (String) -> Unit, onDismiss: () -> Unit,
-    error: String? = null, completedSends: Int = 0, onOpen: () -> Unit = {}) {
+    error: String? = null, completedSends: Int = 0, onOpen: () -> Unit = {}, onTyping: () -> Unit = {}) {
     val initialSends = rememberSaveable { completedSends }
     val sendIntoView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
     androidx.compose.runtime.LaunchedEffect(error) { if (error != null) sendIntoView.bringIntoView() }
@@ -327,7 +327,7 @@ internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (St
             }
             Text(stringResource(R.string.talk_typed_reply_subtitle, languageName), color = MuralColors.Secondary,
                 style = MaterialTheme.typography.bodyMedium)
-            MuralTextField(text, { text = it.take(2_000) }, modifier = Modifier.fillMaxWidth().testTag("typed-reply-input").focusRequester(focus).onGloballyPositioned {
+            MuralTextField(text, { text = it.take(2_000); onTyping() }, modifier = Modifier.fillMaxWidth().testTag("typed-reply-input").focusRequester(focus).onGloballyPositioned {
                     if (!requestedFocus) { requestedFocus = true; focus.requestFocus() }
                 },
                 minLines = 3, maxLines = 6, label = { Text(stringResource(R.string.talk_typed_reply_field_label)) })

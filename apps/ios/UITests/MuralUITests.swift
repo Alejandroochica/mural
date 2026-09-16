@@ -372,4 +372,36 @@ final class MuralUITests: XCTestCase {
         app.buttons["Done"].tap()
         XCTAssertEqual(app.staticTexts["target-caption"].label, "Hei!")
     }
+    func testInactivityCountdownRemainsReadableAtLargestTextSize() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--preview-inactivity", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let warning = app.staticTexts["Ending in 5s · reply to continue"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 10))
+        XCTAssertTrue(warning.isHittable)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "Inactivity countdown - largest text"; screen.lifetime = .keepAlways; add(screen)
+    }
+    func testQuietSessionClosesAndPreservesItsExplanation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--preview-inactivity-timer"]
+        app.launch()
+        let ended = app.staticTexts["Mural ended this quiet session to avoid running up usage."]
+        XCTAssertTrue(ended.waitForExistence(timeout: 16))
+        XCTAssertEqual(app.staticTexts["microphone-status"].label, "Microphone off")
+    }
+    func testProviderQuotaShowsUsefulAdviceAndSafeSupportReference() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--preview-provider-quota"]
+        app.launch()
+        let message = app.alerts.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "no available API credit")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        XCTAssertTrue(message.label.contains("req_support_fixture"))
+        XCTAssertFalse(message.label.contains("private"))
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "Provider quota error"; screen.lifetime = .keepAlways; add(screen)
+        app.alerts.buttons["OK"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
 }
