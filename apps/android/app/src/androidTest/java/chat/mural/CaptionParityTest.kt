@@ -205,6 +205,26 @@ class CaptionParityTest {
         }
     }
 
+    @Test fun longMeaningRequestKeepsEveryCharacterAndCachesTheFullRevision() {
+        val caption = "UNIQUE_START " + "我喜欢咖啡。 ".repeat(600) + " UNIQUE_END"
+        response = "The entire caption, including its beginning and end."
+        show("zh", caption, "")
+        requests.clear()
+        compose.runOnIdle {
+            MuralViewModel::class.java.getDeclaredMethod("scheduleTranslation", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(vm, true)
+        }
+        compose.waitUntil(10_000) { vm.meaning == response }
+        val request = Json.parseToJsonElement(checkNotNull(requests.poll(2, TimeUnit.SECONDS))).jsonObject
+        assertEquals(caption, request.getValue("input").jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content)
+        compose.runOnIdle {
+            val passage = vm.session!!.passages.single()
+            assertEquals(response, vm.session!!.translations[MeaningRequest.cacheKey(passage.revisionKey, "English")])
+        }
+        compose.onNodeWithTag("start-conversation").assertIsDisplayed()
+        compose.onNodeWithTag("floating-navigation").assertIsDisplayed()
+    }
+
     @Test fun lookupKeepsItsSentenceAndDismissalCancelsTheOldResult() {
         val sentence = "Quiero un café con leche."
         show("es", sentence, "I want a coffee with milk.")

@@ -148,4 +148,28 @@ import XCTest
         XCTAssertTrue(MeaningRequest.translationInput(for: text).hasSuffix(" END"))
         XCTAssertEqual(MeaningRequest.translationInput(for: text), text)
     }
+    func testLongCaptionFailureIsVisibleAndOnlyCompleteRetryIsCached() async {
+        let text = "UNIQUE_START " + String(repeating: "我喜欢咖啡。 ", count: 600) + " UNIQUE_END"
+        let translator = Translator()
+        let controller = MeaningController(delay: .zero, translate: translator.translate)
+        var saved: [String: String] = [:]
+        controller.onResult = { request, result in saved[request.cacheKey] = result.text }
+        let longRequest = request(text)
+        controller.update(longRequest)
+        await waitUntil { translator.requests.count == 1 }
+        XCTAssertEqual(translator.requests[0].translationInput, text)
+        translator.fail()
+        await waitUntil { !controller.isLoading }
+        XCTAssertNotNil(controller.error)
+        XCTAssertTrue(saved.isEmpty)
+        XCTAssertEqual(controller.text, "")
+        controller.retry()
+        await waitUntil { translator.requests.count == 2 }
+        XCTAssertEqual(translator.requests[1].translationInput, text)
+        translator.succeed("The entire caption, including its beginning and end.")
+        await waitUntil { !controller.isLoading }
+        XCTAssertNil(controller.error)
+        XCTAssertEqual(saved[longRequest.cacheKey], controller.text)
+    }
+
 }
