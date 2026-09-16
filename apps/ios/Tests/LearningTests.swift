@@ -76,6 +76,20 @@ final class LearningTests: XCTestCase {
         s = fixture(); s.assessments[0].words[0].quote = "Jeg kan fly."
         XCTAssertEqual(LearningEngine.validate(s.assessments[0], session: s)?.words.count, 0)
     }
+    func testQuoteAcrossBareFragmentBoundaryIsKept() {
+        var session = SessionRecord(languageID: "es")
+        session.append(Fragment(id: "f1", speaker: .user, text: "Me gusta", startMS: 0, endMS: 500))
+        session.append(Fragment(id: "f2", speaker: .user, text: "el café", startMS: 600, endMS: 1200))
+        let passage = session.passages[0]
+        XCTAssertEqual(passage.text, "Me gusta el café")
+        session.assessments = [Assessment(
+            passageID: passage.id, revisionKey: passage.revisionKey, outcome: .success,
+            suggestedLevel: 1, nextGoal: "Sigue.", capability: "Expresses liking",
+            words: [WordProposal(lemma: "gustar", meaning: "to like", form: "gusta",
+                kind: .independent, confidence: 0.95, sourceIDs: ["f1", "f2"],
+                quote: "Me gusta el café", language: "es")])]
+        XCTAssertEqual(LearningEngine.validate(session.assessments[0], session: session)?.words.count, 1)
+    }
     func testDuplicateAssessmentsNeverDoubleCredit() {
         var s = fixture(); s.assessments += s.assessments
         let projection = LearningEngine.project([s], now: s.startedAt)

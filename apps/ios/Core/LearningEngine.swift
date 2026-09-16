@@ -47,7 +47,7 @@ public enum LearningEngine {
                   !word.form.isEmpty, !word.quote.isEmpty,
                   passage.text.localizedCaseInsensitiveContains(word.quote),
                   word.quote.localizedCaseInsensitiveContains(word.form) else { return nil }
-            let refs = passage.fragments.filter { word.sourceIDs.contains($0.id) }.map(\.text).joined()
+            let refs = Passage.join(passage.fragments.filter { word.sourceIDs.contains($0.id) }.map(\.text))
             guard refs.localizedCaseInsensitiveContains(word.quote) else { return nil }
             var result = word
             if result.kind == .independent {
