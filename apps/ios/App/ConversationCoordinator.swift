@@ -225,7 +225,9 @@ import MuralCore
         save(); state = .ended
         if let session { finalAssessments.submit(session) }
         scheduleTranslation(); scheduleReset()
-        if !final, session?.providerID != nil { notice = "Conversation saved. Final voice usage is unconfirmed." }
+        if !final, session?.providerID != nil, notice == nil {
+            notice = "Conversation saved. Final voice usage is unconfirmed."
+        }
         if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
     }
     private func fail(_ message: String) {
@@ -433,9 +435,9 @@ import MuralCore
             }
         }
     }
-    func sendTyped(_ text: String) async {
+    @discardableResult func sendTyped(_ text: String) async -> Bool {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard state == .active, !clean.isEmpty, let snapshot = session else { return }
+        guard state == .active, !clean.isEmpty, let snapshot = session else { return false }
         let offset = Int(Date().timeIntervalSince(snapshot.startedAt) * 1000)
         session?.append(Fragment(speaker: .user, text: String(clean.prefix(2000)), startMS: offset, endMS: offset + 1,
                                  meaningVisible: store.preferences.meaningVisible, typed: true))
@@ -443,11 +445,15 @@ import MuralCore
         defer { if session?.id == snapshot.id { working = false } }
         do {
             let result = try await api.respond(instructions: TeachingPolicy.typedReply(language: language), input: TeachingPolicy.context(session!))
-            guard session?.id == snapshot.id, state == .active else { return }
+            guard session?.id == snapshot.id, state == .active else { return false }
             addUsage(result.usage)
             append("thinking", "The learner typed (data): \(String(clean.prefix(650)))")
             append("commentary", result.text); scheduleAssessment(); save()
-        } catch { if session?.id == snapshot.id { self.error = error.localizedDescription } }
+            return true
+        } catch {
+            if session?.id == snapshot.id { self.error = error.localizedDescription }
+            return false
+        }
     }
     func lookup(word: String, sentence: String) async throws -> String {
         guard hasAIConsent else { throw AIProcessingConsent.ConsentError.required }

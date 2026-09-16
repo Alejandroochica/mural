@@ -231,7 +231,7 @@ struct TypedReplyView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Say it your way.").font(.system(.title, design: .rounded, weight: .semibold))
                 TextField("Reply in \(coordinator.language.name) or another language", text: $text, axis: .vertical).lineLimit(3...6).focused($focused).padding(18).background(.white, in: RoundedRectangle(cornerRadius: 22))
-                Button { sending = true; Task { await coordinator.sendTyped(text); sending = false; dismiss() } } label: {
+                Button { sending = true; Task { let ok = await coordinator.sendTyped(text); sending = false; if ok { dismiss() } } } label: {
                     HStack { Text(sending ? "Sending…" : "Send reply"); Spacer(); Image(systemName: "arrow.up") }.padding(18).background(MuralColor.orange, in: Capsule())
                 }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Spacer()
