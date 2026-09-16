@@ -141,4 +141,11 @@ import XCTest
         await waitUntil { !controller.isLoading }
         XCTAssertEqual(controller.text, "Salut")
     }
+
+    func testTranslationInputKeepsTheStartOfLongPassages() {
+        let text = "UNIQUE_START " + String(repeating: "y", count: 2_300) + " END"
+        XCTAssertTrue(MeaningRequest.translationInput(for: text).hasPrefix("UNIQUE_START"))
+        XCTAssertTrue(MeaningRequest.translationInput(for: text).hasSuffix(" END"))
+        XCTAssertEqual(MeaningRequest.translationInput(for: text), text)
+    }
 }

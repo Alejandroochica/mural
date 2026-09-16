@@ -339,4 +339,12 @@ class MeaningControllerTest {
         }
     }
 
+    @Test fun translationInputKeepsTheStartOfLongPassages() {
+        val text = "UNIQUE_START " + "y".repeat(2300) + " END"
+        val prepared = MeaningRequest.translationInput(text)
+        assertTrue(prepared.startsWith("UNIQUE_START"))
+        assertTrue(prepared.endsWith(" END"))
+        assertEquals(text, prepared)
+    }
+
 }

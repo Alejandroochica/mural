@@ -16,11 +16,15 @@ data class MeaningRequest(
 
     val cacheKey get() = cacheKey(revisionKey, meaningLanguage)
 
+    /** Caption text sent to the translation helper. Must match what the learner sees for this revision. */
+    val translationInput get() = translationInput(text)
+
     fun sharesContext(other: MeaningRequest) = sessionID == other.sessionID && passageID == other.passageID &&
         learningLanguageID == other.learningLanguageID && meaningLanguage == other.meaningLanguage
 
     companion object {
         fun cacheKey(revisionKey: String, language: String) = "$language::$revisionKey"
+        fun translationInput(text: String): String = text
     }
 }
 
