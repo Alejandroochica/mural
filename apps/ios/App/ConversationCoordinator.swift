@@ -20,6 +20,7 @@ import MuralCore
     var meaningError: String? { meanings.error }
     private(set) var working = false
     var error: String?
+    var typedReplyError: String?
     var notice: String?
     var showSettings = false
     var showAIConsent = false
@@ -225,7 +226,10 @@ import MuralCore
         save(); state = .ended
         if let session { finalAssessments.submit(session) }
         scheduleTranslation(); scheduleReset()
-        if !final, session?.providerID != nil { notice = "Conversation saved. Final voice usage is unconfirmed." }
+        let endNotices = ["You’ve reached your conversation time limit.", "Mural ended this quiet session to avoid running up usage."]
+        if !endNotices.contains(notice ?? "") {
+            notice = !final && session?.providerID != nil ? "Conversation saved. Final voice usage is unconfirmed." : nil
+        }
         if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
     }
     private func fail(_ message: String) {
@@ -242,6 +246,9 @@ import MuralCore
     }
     @discardableResult private func append(_ kind: String, _ text: String, delegationID: String? = nil) -> Bool {
         guard state == .active else { return false }
+        #if DEBUG && targetEnvironment(simulator)
+        if typedReplyPreview { return true }
+        #endif
         let id = UUID().uuidString
         // Bound short instruction updates conservatively below the protocol token cap.
         let accepted = transport.send(["type": "session.\(kind).append", "event_id": id,
@@ -341,10 +348,25 @@ import MuralCore
         let sample = ["nb": "Jeg liker kaffe.", "de": "Ich mag Kaffee.", "it": "Mi piace il caffè.", "pt": "Eu gosto de café.", "zh": "我喜欢喝咖啡。"]
         record.append(Fragment(speaker: .assistant, text: sample[language.id] ?? language.greeting, startMS: 0, endMS: 1000))
         record.translations[MeaningRequest.cacheKey(revisionKey: record.passages[0].revisionKey, language: "English")] = "I like coffee."
-        session = record; state = .closing; finish(final: true)
+        let arguments = ProcessInfo.processInfo.arguments
+        let checkNotice = arguments.contains("--test-end-notice")
+        if checkNotice {
+            record.providerID = "fixture-only"
+            notice = arguments.contains("--test-inactivity") ? "Mural ended this quiet session to avoid running up usage." : "Mural will make that a little simpler."
+        }
+        session = record; state = .closing; finish(final: !checkNotice)
     }
     #endif
     #if DEBUG && targetEnvironment(simulator)
+    private var typedReplyPreview: Bool {
+        ProcessInfo.processInfo.arguments.contains("--preview") && ProcessInfo.processInfo.arguments.contains("--test-typed-retry")
+    }
+    private var previewReplyAttempts = 0
+    func prepareTypedReplyPreview() {
+        guard typedReplyPreview else { return }
+        session = SessionRecord(languageID: language.id)
+        state = .active
+    }
     func prepareScreenshot(_ screen: ScreenshotPreview.Screen) {
         store.selectLanguage("es")
         store.updatePreferences { $0.meaningVisible = true; $0.meaningLanguage = "English"; $0.hasOnboarded = true }
@@ -433,21 +455,56 @@ import MuralCore
             }
         }
     }
-    func sendTyped(_ text: String) async {
+    @discardableResult func sendTyped(_ text: String) async -> Bool {
+        typedReplyError = nil
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard state == .active, !clean.isEmpty, let snapshot = session else { return }
-        let offset = Int(Date().timeIntervalSince(snapshot.startedAt) * 1000)
-        session?.append(Fragment(speaker: .user, text: String(clean.prefix(2000)), startMS: offset, endMS: offset + 1,
-                                 meaningVisible: store.preferences.meaningVisible, typed: true))
-        save(); working = true
-        defer { if session?.id == snapshot.id { working = false } }
+        guard !working else { return false }
+        guard state == .active, !clean.isEmpty, var draft = session else {
+            typedReplyError = "Start a conversation before sending your reply."
+            return false
+        }
+        let sessionID = draft.id
+        let offset = Int(Date().timeIntervalSince(draft.startedAt) * 1000)
+        let fragment = Fragment(speaker: .user, text: String(clean.prefix(2000)), startMS: offset, endMS: offset + 1,
+                                meaningVisible: store.preferences.meaningVisible, typed: true)
+        draft.append(fragment)
+        working = true
+        defer { if session?.id == sessionID { working = false } }
         do {
-            let result = try await api.respond(instructions: TeachingPolicy.typedReply(language: language), input: TeachingPolicy.context(session!))
-            guard session?.id == snapshot.id, state == .active else { return }
+            let result = try await typedReplyResponse(instructions: TeachingPolicy.typedReply(language: language), input: TeachingPolicy.context(draft))
+            guard session?.id == sessionID, state == .active else {
+                typedReplyError = "This conversation has ended. Your reply has not been sent."
+                return false
+            }
             addUsage(result.usage)
-            append("thinking", "The learner typed (data): \(String(clean.prefix(650)))")
-            append("commentary", result.text); scheduleAssessment(); save()
-        } catch { if session?.id == snapshot.id { self.error = error.localizedDescription } }
+            guard append("thinking", "The learner typed (data): \(String(clean.prefix(650)))"),
+                  append("commentary", result.text) else {
+                typedReplyError = "Your reply couldn’t be sent. Check your connection and try again."
+                return false
+            }
+            session?.append(fragment)
+            lastActivity = .now
+            #if DEBUG && targetEnvironment(simulator)
+            if !typedReplyPreview { scheduleAssessment() }
+            #else
+            scheduleAssessment()
+            #endif
+            save()
+            return true
+        } catch {
+            if session?.id == sessionID { typedReplyError = error.localizedDescription }
+            return false
+        }
+    }
+    private func typedReplyResponse(instructions: String, input: String) async throws -> APIResult {
+        #if DEBUG && targetEnvironment(simulator)
+        if typedReplyPreview {
+            previewReplyAttempts += 1
+            if previewReplyAttempts == 1 { throw APIClient.APIError.http(503) }
+            return APIResult(text: "Gracias.", sources: [], usage: APIUsage())
+        }
+        #endif
+        return try await api.respond(instructions: instructions, input: input)
     }
     func lookup(word: String, sentence: String) async throws -> String {
         guard hasAIConsent else { throw AIProcessingConsent.ConsentError.required }

@@ -13,6 +13,7 @@ struct RootView: View {
             store.updatePreferences { $0.hasOnboarded = true }
         }
         if let screen = ScreenshotPreview.screen { coordinator.prepareScreenshot(screen) }
+        coordinator.prepareTypedReplyPreview()
         _tab = State(initialValue: ScreenshotPreview.tab)
         #endif
         _coordinator = State(initialValue: coordinator)
@@ -228,15 +229,25 @@ struct TypedReplyView: View {
     @FocusState private var focused: Bool
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
+            ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Say it your way.").font(.system(.title, design: .rounded, weight: .semibold))
-                TextField("Reply in \(coordinator.language.name) or another language", text: $text, axis: .vertical).lineLimit(3...6).focused($focused).padding(18).background(.white, in: RoundedRectangle(cornerRadius: 22))
-                Button { sending = true; Task { await coordinator.sendTyped(text); sending = false; dismiss() } } label: {
-                    HStack { Text(sending ? "Sending…" : "Send reply"); Spacer(); Image(systemName: "arrow.up") }.padding(18).background(MuralColor.orange, in: Capsule())
-                }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text("Say it your way.").font(.system(.title, design: .rounded, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                TextField("Reply in \(coordinator.language.name) or another language", text: $text, axis: .vertical).lineLimit(3...6).focused($focused).padding(18).background(.white, in: RoundedRectangle(cornerRadius: 22)).accessibilityIdentifier("typed-reply-input")
+                if let error = coordinator.typedReplyError {
+                    Text(error).font(.footnote).foregroundStyle(MuralColor.secondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("typed-reply-error")
+                }
+                Button { sending = true; Task { let ok = await coordinator.sendTyped(text); sending = false; if ok { dismiss() } } } label: {
+                    HStack { Text(sending ? "Sending…" : "Send reply").fixedSize(horizontal: false, vertical: true); Spacer(); Image(systemName: "arrow.up") }.padding(18).background(MuralColor.orange, in: Capsule())
+                }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("typed-reply-send").id("typed-reply-send")
                 Spacer()
-            }.padding(26).foregroundStyle(MuralColor.ink).background(MuralColor.cream)
+            }.padding(26).frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(MuralColor.ink)
+            }.accessibilityIdentifier("typed-reply-scroll").background(MuralColor.cream)
+                .onChange(of: coordinator.typedReplyError) { _, error in
+                    if error != nil { withAnimation { proxy.scrollTo("typed-reply-send", anchor: .bottom) } }
+                }
+            }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-        }.presentationDetents([.medium, .large]).onAppear { focused = true }
+        }.presentationDetents([.medium, .large]).onAppear { coordinator.typedReplyError = nil; focused = true }
     }
 }

@@ -94,6 +94,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     var error by mutableStateOf<String?>(null); private set
     var errorNeedsKeySetup by mutableStateOf(false); private set
     var errorNeedsAccountSignIn by mutableStateOf(false); private set
+    var typedReplyError by mutableStateOf<String?>(null); private set
+    var typedRepliesSent by mutableStateOf(0); private set
+    fun clearTypedReplyError() { typedReplyError = null }
     var notice by mutableStateOf<String?>(null); private set
     var meaning by mutableStateOf(""); private set
     var translating by mutableStateOf(false); private set
@@ -731,6 +734,11 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         transport.disconnect(); inputLevel = 0.0; outputLevel = 0.0; working = false; isMuted = false
         updateSession { it.endedAt = nowSeconds(); it.usageFinal = final }
         state = "ended"
+        notice = when (session?.endReason) {
+            "Inactivity" -> getApplication<Application>().getString(R.string.notice_ended_inactivity)
+            "Time limit" -> getApplication<Application>().getString(R.string.notice_time_limit_reached)
+            else -> null
+        }
         session?.let {
             if (it.id in hostedSessionIDs) {
                 hostedBindings.ended(it.id); reconcileHostedSessions(); finishHostedAssessment(clone(it))
@@ -927,6 +935,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun sendTyped(text: String) {
+        typedReplyError = null
         val clean = text.trim().take(2000)
         if (clean.isEmpty() || working || state in listOf("connecting", "closing") || !cloudReady()) return
         if (state != "active") {
@@ -937,23 +946,36 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         }
         val id = session!!.id; val token = generation
         val offset = ((nowSeconds() - session!!.startedAt) * 1000).toInt().coerceAtLeast(0)
-        updateSession { it.append(Fragment(speaker = Speaker.user, text = clean, startMS = offset, endMS = offset + 1, meaningVisible = archive.preferences.meaningVisible, typed = true)) }
+        val fragment = Fragment(speaker = Speaker.user, text = clean, startMS = offset, endMS = offset + 1, meaningVisible = archive.preferences.meaningVisible, typed = true)
+        val draft = clone(session!!).also { it.append(fragment) }
         lastActivity = nowSeconds(); working = true
         actionJob = viewModelScope.launch {
             try {
                 val instructions = if (voiceSession) TeachingPolicy.typedReply(language) else TeachingPolicy.voice(language, learner, selectedTheme, archive.preferences.interests, archive.preferences.meaningLanguage) + "\n" + TeachingPolicy.typedReply(language)
-                val result = teaching(id, HelperPurpose.TYPED_REPLY, UUID.randomUUID().toString(), instructions, helperContext(session!!))
+                val result = teaching(id, HelperPurpose.TYPED_REPLY, UUID.randomUUID().toString(), instructions, helperContext(draft))
                 if (token != generation || session?.id != id || state != "active") return@launch
                 updateSession { addUsage(it, result.usage) }
-                if (voiceSession) { command("thinking", "The learner typed (data): ${clean.take(650)}"); command("commentary", result.text) }
-                else {
+                if (voiceSession) {
+                    if (!command("thinking", "The learner typed (data): ${clean.take(650)}") || !command("commentary", result.text)) {
+                        typedReplyError = getApplication<Application>().getString(R.string.error_send_message_failed)
+                        return@launch
+                    }
+                    updateSession { it.append(fragment) }
+                } else {
+                    updateSession { it.append(fragment) }
                     val end = ((nowSeconds() - session!!.startedAt) * 1000).toInt().coerceAtLeast(offset + 2)
                     updateSession { it.append(Fragment(speaker = Speaker.assistant, text = result.text, startMS = end, endMS = end + 1)) }
                     scheduleTranslation()
                 }
+                typedRepliesSent++
                 scheduleAssessment()
             } catch (_: CancellationException) { }
-            catch (e: Exception) { if (session?.id == id) presentError(e, R.string.error_send_message_failed) }
+            catch (e: Exception) {
+                if (session?.id == id) {
+                    typedReplyError = resolveMessage(e, R.string.error_send_message_failed)
+                    if (errorNeedsKeySetup(e) || needsAccountRecovery(e)) presentError(e, R.string.error_send_message_failed)
+                }
+            }
             finally { if (token == generation) working = false }
         }
     }
