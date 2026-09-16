@@ -270,7 +270,8 @@ fun TalkScreen(
     }
     }
 
-    if (typing) TypedReplySheet(vm.language.name, vm.working, onSendTyped, onDismiss = { typing = false })
+    if (typing) TypedReplySheet(vm.language.name, vm.working, onSendTyped, onDismiss = { typing = false },
+        error = vm.typedReplyError, completedSends = vm.typedRepliesSent, onOpen = vm::clearTypedReplyError)
     if (lookup) WordLookupSheet(lookupWord, lookupSentence, vm.language.id, vm.lookupResult, vm.lookupError, vm.lookupLoading,
         onDismiss = { vm.clearLookup(); lookup = false; lookupWord = "" })
     transcript?.let { TranscriptDialog(vm, it, onDismiss = { transcript = null }) }
@@ -306,7 +307,11 @@ private fun RoundAction(symbol: MuralSymbol, label: String, selected: Boolean = 
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (String) -> Unit, onDismiss: () -> Unit,
+    error: String? = null, completedSends: Int = 0, onOpen: () -> Unit = {}) {
+    val initialSends = rememberSaveable { completedSends }
+    androidx.compose.runtime.LaunchedEffect(Unit) { onOpen() }
+    androidx.compose.runtime.LaunchedEffect(completedSends) { if (completedSends > initialSends) onDismiss() }
     var text by rememberSaveable { mutableStateOf("") }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     var requestedFocus by remember { mutableStateOf(false) }
@@ -323,7 +328,9 @@ internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (St
                     if (!requestedFocus) { requestedFocus = true; focus.requestFocus() }
                 },
                 minLines = 3, maxLines = 6, label = { Text(stringResource(R.string.talk_typed_reply_field_label)) })
-            Button(onClick = { onSend(text.trim()); onDismiss() }, enabled = text.isNotBlank() && !working,
+            if (error != null) Text(error, color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("typed-reply-error"))
+            Button(onClick = { onSend(text.trim()) }, enabled = text.isNotBlank() && !working,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("typed-reply-send"), shape = CircleShape) {
                 Text(stringResource(R.string.talk_typed_reply_send_button)); Spacer(Modifier.width(8.dp))
                 MuralIcon(MuralSymbol.ArrowUp, Modifier.size(18.dp))

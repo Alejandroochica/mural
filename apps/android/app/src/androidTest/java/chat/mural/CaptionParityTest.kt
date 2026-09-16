@@ -205,6 +205,25 @@ class CaptionParityTest {
         }
     }
 
+    @Test fun typedReplyFailureRetriesWithoutDuplicateTranscriptRows() {
+        show("es", "Hola.", "Hello.")
+        responseCode = 503
+        compose.onNodeWithText(compose.activity.getString(R.string.talk_type_button)).performScrollTo().performClick()
+        compose.onNodeWithTag("typed-reply-input").performTextInput("Quiero un café.")
+        compose.onNodeWithTag("typed-reply-send").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("typed-reply-error").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("typed-reply-error").assertIsDisplayed()
+        compose.onNodeWithTag("typed-reply-input").assertTextContains("Quiero un café.")
+        compose.runOnIdle { assertEquals(0, vm.session!!.fragments.count { it.speaker == Speaker.user }); assertNull(vm.error) }
+        responseCode = 200; response = "Gracias."
+        compose.onNodeWithTag("typed-reply-send").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("typed-reply-input").fetchSemanticsNodes().isEmpty() }
+        compose.runOnIdle {
+            assertEquals(listOf("Quiero un café."), vm.session!!.fragments.filter { it.speaker == Speaker.user }.map { it.text })
+            assertNull(vm.typedReplyError)
+        }
+    }
+
     @Test fun lookupKeepsItsSentenceAndDismissalCancelsTheOldResult() {
         val sentence = "Quiero un café con leche."
         show("es", sentence, "I want a coffee with milk.")

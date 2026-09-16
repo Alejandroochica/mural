@@ -128,6 +128,29 @@ final class MuralUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "喝杯咖啡？")).firstMatch.exists)
     }
 
+    func testTypedReplyFailureKeepsDraftAndRetrySavesOnlyOneReply() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--test-typed-retry"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Type instead"].waitForExistence(timeout: 10))
+        app.buttons["Type instead"].tap()
+        let field = app.textViews["typed-reply-input"].exists ? app.textViews["typed-reply-input"] : app.textFields["typed-reply-input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.typeText("Quiero un cafe.")
+        app.buttons["typed-reply-send"].tap()
+        XCTAssertTrue(app.staticTexts["typed-reply-error"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Quiero un cafe.")
+        XCTAssertTrue(app.buttons["typed-reply-send"].isHittable)
+        let failure = XCTAttachment(screenshot: app.screenshot())
+        failure.name = "Typed reply failure preserves draft"; failure.lifetime = .keepAlways; add(failure)
+        app.buttons["typed-reply-send"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        app.buttons["End conversation"].tap()
+        XCTAssertTrue(app.buttons["Conversation transcript"].waitForExistence(timeout: 8))
+        app.buttons["Conversation transcript"].tap()
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", "Quiero un cafe.")).count, 1)
+    }
+
     private func launch(ended: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--preview"] + (ended ? ["--ended-conversation"] : [])
         app.launch(); return app

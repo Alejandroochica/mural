@@ -13,6 +13,7 @@ struct RootView: View {
             store.updatePreferences { $0.hasOnboarded = true }
         }
         if let screen = ScreenshotPreview.screen { coordinator.prepareScreenshot(screen) }
+        coordinator.prepareTypedReplyPreview()
         _tab = State(initialValue: ScreenshotPreview.tab)
         #endif
         _coordinator = State(initialValue: coordinator)
@@ -230,13 +231,16 @@ struct TypedReplyView: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Say it your way.").font(.system(.title, design: .rounded, weight: .semibold))
-                TextField("Reply in \(coordinator.language.name) or another language", text: $text, axis: .vertical).lineLimit(3...6).focused($focused).padding(18).background(.white, in: RoundedRectangle(cornerRadius: 22))
+                TextField("Reply in \(coordinator.language.name) or another language", text: $text, axis: .vertical).lineLimit(3...6).focused($focused).padding(18).background(.white, in: RoundedRectangle(cornerRadius: 22)).accessibilityIdentifier("typed-reply-input")
+                if let error = coordinator.typedReplyError {
+                    Text(error).font(.footnote).foregroundStyle(MuralColor.secondary).accessibilityIdentifier("typed-reply-error")
+                }
                 Button { sending = true; Task { let ok = await coordinator.sendTyped(text); sending = false; if ok { dismiss() } } } label: {
                     HStack { Text(sending ? "Sending…" : "Send reply"); Spacer(); Image(systemName: "arrow.up") }.padding(18).background(MuralColor.orange, in: Capsule())
-                }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("typed-reply-send")
                 Spacer()
             }.padding(26).foregroundStyle(MuralColor.ink).background(MuralColor.cream)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-        }.presentationDetents([.medium, .large]).onAppear { focused = true }
+        }.presentationDetents([.medium, .large]).onAppear { coordinator.typedReplyError = nil; focused = true }
     }
 }
