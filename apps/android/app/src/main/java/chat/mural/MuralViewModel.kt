@@ -645,7 +645,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleMute() { if (state == "active" && voiceSession) { isMuted = !isMuted; transport.mute(isMuted) } }
     fun help() {
         if (state != "active") return
-        if (voiceSession) { activity.learnerEngaged(activityNow()); inactivitySeconds = null; conversationPace.askForHelp(); command("instructions", conversationPace.instruction); command("instructions", TeachingPolicy.help(language)); notice = getApplication<Application>().getString(R.string.notice_help_simpler) }
+        if (voiceSession) { activity.learnerEngaged(activityNow()); inactivitySeconds = null; conversationPace.askForHelp(session?.passages?.lastOrNull { it.speaker == Speaker.user }); command("instructions", conversationPace.instruction); command("instructions", TeachingPolicy.help(language)); notice = getApplication<Application>().getString(R.string.notice_help_simpler) }
         else {
             if (working || !cloudReady()) return
             val snapshot = session ?: return

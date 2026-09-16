@@ -41,6 +41,16 @@ final class ConversationPaceTests: XCTestCase {
         XCTAssertEqual(bad.suggestedLevel, 4)
         XCTAssertTrue(pace.instruction.contains("unhurried"))
     }
+    func testHelpWinsOverAnAssessmentThatWasAlreadyInFlight() {
+        var pace = ConversationPace()
+        let (assessment, passage) = sample("in-flight")
+        pace.askForHelp(after: passage)
+        XCTAssertFalse(pace.observe(assessment, passage: passage, languageID: "nb"))
+        XCTAssertEqual(pace.delivery, .gentle)
+        let (fresh, next) = sample("fresh")
+        XCTAssertTrue(pace.observe(fresh, passage: next, languageID: "nb"))
+        XCTAssertEqual(pace.delivery, .natural)
+    }
     func testAllSpokenPromptPathsPreserveRegionalPronunciation() {
         for language in LanguageRegistry.all {
             let learner = LearningEngine.project([], languageID: language.id)

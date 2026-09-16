@@ -5,9 +5,12 @@ public struct ConversationPace: Sendable {
     public enum Delivery: Sendable { case gentle, natural, extended }
     public private(set) var delivery: Delivery = .gentle
     private var successfulPassages = Set<String>()
+    private var highSuccesses = 0
+    private var helpPassageID: String?
     public init() {}
-    @discardableResult public mutating func askForHelp() -> Bool {
-        successfulPassages.removeAll()
+    @discardableResult public mutating func askForHelp(after passage: Passage? = nil) -> Bool {
+        highSuccesses = 0
+        helpPassageID = passage?.id
         return set(.gentle)
     }
     /// Call only after LearningEngine.validate has accepted the assessment.
@@ -15,13 +18,14 @@ public struct ConversationPace: Sendable {
         guard assessment.passageID == passage.id, assessment.revisionKey == passage.revisionKey,
               passage.speaker == .user, !passage.fragments.isEmpty,
               (0...5).contains(assessment.suggestedLevel) else { return false }
-        if assessment.outcome == .breakdown { return askForHelp() }
-        guard assessment.outcome == .success,
+        if assessment.outcome == .breakdown { return askForHelp(after: passage) }
+        guard passage.id != helpPassageID, assessment.outcome == .success,
               !passage.fragments.contains(where: { $0.typed || $0.meaningVisible }),
               assessment.words.contains(where: { $0.language == languageID && $0.kind == .independent && $0.confidence >= 0.8 }),
               successfulPassages.insert(passage.id).inserted else { return false }
+        highSuccesses = assessment.suggestedLevel >= 4 ? highSuccesses + 1 : 0
         if assessment.suggestedLevel <= 1 { return set(.gentle) }
-        return set(assessment.suggestedLevel >= 4 && successfulPassages.count >= 2 ? .extended : .natural)
+        return set(highSuccesses >= 2 ? .extended : .natural)
     }
     private mutating func set(_ next: Delivery) -> Bool {
         guard delivery != next else { return false }

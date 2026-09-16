@@ -199,7 +199,7 @@ import MuralCore
     func help() {
         guard state == .active else { return }
         activity.learnerEngaged(now: activityNow); inactivitySeconds = nil
-        conversationPace.askForHelp()
+        conversationPace.askForHelp(after: userPassage)
         append("instructions", conversationPace.instruction)
         append("instructions", TeachingPolicy.help(language: language))
         notice = "Mural will make that a little simpler."

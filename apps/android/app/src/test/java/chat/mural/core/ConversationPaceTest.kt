@@ -42,6 +42,16 @@ class ConversationPaceTest {
         assertEquals(4, bad.suggestedLevel)
         assertTrue(pace.instruction.contains("unhurried"))
     }
+    @Test fun helpWinsOverAnAssessmentThatWasAlreadyInFlight() {
+        val pace = ConversationPace()
+        val (assessment, passage) = sample("in-flight")
+        pace.askForHelp(passage)
+        assertFalse(pace.observe(assessment, passage, "nb"))
+        assertEquals(ConversationPace.Delivery.GENTLE, pace.delivery)
+        val (fresh, next) = sample("fresh")
+        assertTrue(pace.observe(fresh, next, "nb"))
+        assertEquals(ConversationPace.Delivery.NATURAL, pace.delivery)
+    }
     @Test fun allSpokenPromptPathsPreserveRegionalPronunciation() {
         for (language in LanguageRegistry.all) {
             val learner = LearningEngine.project(emptyList(), language.id)

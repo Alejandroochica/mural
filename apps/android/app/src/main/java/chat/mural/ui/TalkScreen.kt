@@ -136,7 +136,9 @@ fun TalkScreen(
         )
         Box(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp), contentAlignment = Alignment.Center) {
             Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession, vm.inactivitySeconds), style = MaterialTheme.typography.bodySmall,
-                color = MuralColors.Secondary, modifier = Modifier.testTag("conversation-status"))
+                color = MuralColors.Secondary, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = if (vm.inactivitySeconds != null && assistantPassage != null) 40.dp else 0.dp)
+                    .testTag("conversation-status"))
             if (assistantPassage != null && passage?.isNotBlank() == true) {
                 Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
                     ReportUtteranceAction(onClick = {

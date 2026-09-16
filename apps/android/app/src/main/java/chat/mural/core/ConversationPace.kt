@@ -6,20 +6,24 @@ class ConversationPace {
     var delivery = Delivery.GENTLE
         private set
     private val successfulPassages = mutableSetOf<String>()
-    fun askForHelp(): Boolean {
-        successfulPassages.clear()
+    private var highSuccesses = 0
+    private var helpPassageID: String? = null
+    fun askForHelp(after: Passage? = null): Boolean {
+        highSuccesses = 0
+        helpPassageID = after?.id
         return set(Delivery.GENTLE)
     }
     /** Call only after LearningEngine.validate has accepted the assessment. */
     fun observe(assessment: Assessment, passage: Passage, languageID: String): Boolean {
         if (assessment.passageID != passage.id || assessment.revisionKey != passage.revisionKey ||
             passage.speaker != Speaker.user || passage.fragments.isEmpty() || assessment.suggestedLevel !in 0..5) return false
-        if (assessment.outcome == Outcome.breakdown) return askForHelp()
-        if (assessment.outcome != Outcome.success || passage.fragments.any { it.typed || it.meaningVisible } ||
+        if (assessment.outcome == Outcome.breakdown) return askForHelp(passage)
+        if (passage.id == helpPassageID || assessment.outcome != Outcome.success || passage.fragments.any { it.typed || it.meaningVisible } ||
             assessment.words.none { it.language == languageID && it.kind == EvidenceKind.independent && it.confidence >= 0.8 } ||
             !successfulPassages.add(passage.id)) return false
+        highSuccesses = if (assessment.suggestedLevel >= 4) highSuccesses + 1 else 0
         if (assessment.suggestedLevel <= 1) return set(Delivery.GENTLE)
-        return set(if (assessment.suggestedLevel >= 4 && successfulPassages.size >= 2) Delivery.EXTENDED else Delivery.NATURAL)
+        return set(if (highSuccesses >= 2) Delivery.EXTENDED else Delivery.NATURAL)
     }
     private fun set(next: Delivery): Boolean {
         if (delivery == next) return false

@@ -52,6 +52,9 @@ class ConversationPolicyTest {
             state("state", "active"); state("inactivitySeconds", 5)
         }
         compose.onNodeWithTag("conversation-status").assertTextEquals(compose.activity.getString(R.string.talk_inactivity_warning, 5)).assertIsDisplayed()
+        val warningBounds = compose.onNodeWithTag("conversation-status").fetchSemanticsNode().boundsInRoot
+        val reportBounds = compose.onNodeWithTag("report-current-utterance").fetchSemanticsNode().boundsInRoot
+        assertTrue("Countdown must leave room for the report control", warningBounds.right <= reportBounds.left + 1)
         capture("countdown")
         compose.onNodeWithText(compose.activity.getString(R.string.talk_type_button)).performClick()
         compose.onNodeWithTag("typed-reply-input").performTextInput("Hola")
