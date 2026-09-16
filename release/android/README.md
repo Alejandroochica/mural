@@ -6,7 +6,7 @@ The archived **version 4 guest preview for adults 18+** was submitted to Play pr
 
 | File | Purpose |
 | --- | --- |
-| [candidate-scopes.md](candidate-scopes.md) | Current v8 configurations, historical direct direct distribution and the v4 Play submission |
+| [candidate-scopes.md](candidate-scopes.md) | Current v8 configurations, historical direct distribution and the v4 Play submission |
 | [signed-candidate-2026-09-14-v4.md](signed-candidate-2026-09-14-v4.md) | Historical version 4 free-trial/BYOK APK/AAB, full UI results and packaging checks |
 | [signed-candidate-2026-09-14-v3.md](signed-candidate-2026-09-14-v3.md) | Historical version 3 APK/AAB, certificate and packaging checks |
 | [signed-candidate-2026-09-14-v2.md](signed-candidate-2026-09-14-v2.md) | Historical version 2 APK/AAB and packaging evidence |

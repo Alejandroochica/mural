@@ -4,13 +4,13 @@ The combined source includes #41/#48/#49/#57/#61, the main-branch #50/#53/#54 fi
 
 | Check | Result |
 | --- | --- |
-| Server suite with isolated PostgreSQL | 362 passed; none skipped |
+| Server suite with isolated PostgreSQL | 364 passed; none skipped |
 | TypeScript check | Passed |
 | Swift core | 98 passed |
 | Android unit | 338 passed; none skipped |
 | Android lint and app/test builds | Passed |
 | Android native UI suite | 71 passed; none skipped |
-| Repository Python checks | 53 passed |
+| Repository Python checks | 54 passed |
 | Cross-platform parity and Android content export | Passed |
 | Live iPhone audio | Two calls passed: captions, speaker output, closure and audio release |
 | iPhone UI | 26 passed in the final full rerun |
@@ -49,3 +49,5 @@ The APK was installed directly over published v7 on an isolated 16 KB emulator w
 Purchases, Play-signed login, Bluetooth and cellular handoff were not exercised in this release run. Their code/configuration is unchanged. The release remains a direct-download preview; no Play submission, paid transaction or server deployment is part of this task.
 
 A release-version assertion initially still selected v7; it was updated to validate current v8 against historical v7/v4, and all 53 repository checks passed again. Integration with newly merged main changed no product-code files after the successful native runs.
+
+Final review follow-ups corrected a documentation typo, made timeout parity compare fractional values, and recorded a close request after provider attachment fails. Concurrent close requests emit one diagnostic; missing or closed sessions emit none, and unresolved usage holds remain reserved. The full server suite passed again (364 tests), as did TypeScript and all 54 Python checks. These follow-ups changed no native app source or release binary.

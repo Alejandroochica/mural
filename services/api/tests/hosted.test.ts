@@ -622,9 +622,9 @@ integration('voice lifecycle logging distinguishes requested closure from confir
   const f = await fixture();
   try {
     const live = await f.controller.create(f.account, 'logged-session', 'v=0', 'es-ES');
-    await f.controller.close(f.account, live.sessionID);
+    await Promise.all(Array.from({ length: 4 }, () => f.controller.close(f.account, live.sessionID)));
     assert.ok(f.lifecycle.some(record => record.event === 'voice_active'));
-    assert.ok(f.lifecycle.some(record => record.event === 'voice_close_requested'));
+    assert.equal(f.lifecycle.filter(record => record.event === 'voice_close_requested').length, 1);
     assert.equal(f.lifecycle.filter(record => record.event === 'voice_closed').length, 0);
     f.send(live.providerSessionID, { type: 'session.closed', usage: { seconds: 12 } });
     await until(async () => (await f.controller.status(f.account, live.sessionID)).state === 'closed');
@@ -632,6 +632,43 @@ integration('voice lifecycle logging distinguishes requested closure from confir
     const records = f.lifecycle.filter(record => record.event.startsWith('voice_'));
     assert.ok(records.every(record => record.sessionReference === live.sessionID.replaceAll('-', '').slice(0, 12)));
     assert.doesNotMatch(JSON.stringify(records), new RegExp(`${f.account}|${live.providerSessionID}|${live.sessionID}|v=0`));
+    assert.equal((await f.wallet()).reserved_nano, '0');
+  } finally { await f.cleanup(); }
+});
+
+integration('close logging survives attach failure and concurrent requests without releasing the hold', async () => {
+  const f = await fixture(2_000_000_000n, 600_000);
+  try {
+    f.provider.attach = async () => { throw new Error('connection unavailable'); };
+    await assert.rejects(f.controller.create(f.account, 'logged-attach-failure', 'v=0', 'es-ES'), { code: 'provider_session_unconfirmed' });
+    const row = (await f.db.query('SELECT * FROM hosted_sessions')).rows[0];
+    assert.equal(row.close_requested_at, null);
+    await Promise.all(Array.from({ length: 4 }, () => f.controller.requestClose(row.id, 'worker_recovery')));
+    await f.controller.requestClose(row.id, 'worker_recovery');
+    const records = f.lifecycle.filter(record => record.event === 'voice_close_requested');
+    assert.equal(records.length, 1);
+    const record = records[0]; assert.ok(record);
+    assert.equal(record.operation, 'voice.close.worker_recovery');
+    assert.equal(record.sessionReference, row.id.replaceAll('-', '').slice(0, 12));
+    const after = (await f.db.query('SELECT * FROM hosted_sessions WHERE id=$1', [row.id])).rows[0];
+    assert.equal(after.state, 'incomplete');
+    assert.equal(after.close_reason, 'create_or_attach_uncertain');
+    assert.ok(after.close_requested_at);
+    assert.equal((await f.minutes()).reserved_ms, '600000');
+    assert.equal(f.lifecycle.filter(record => record.event === 'voice_closed').length, 0);
+  } finally { await f.cleanup(); }
+});
+
+integration('missing and already closed sessions do not emit close-request diagnostics', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.requestClose(randomUUID(), 'worker_recovery');
+    f.rejectCreate = true; f.rejectionStatus = 403;
+    await assert.rejects(f.controller.create(f.account, 'logged-rejected-session', 'v=0', 'es-ES'));
+    const row = (await f.db.query('SELECT * FROM hosted_sessions')).rows[0];
+    assert.equal(row.state, 'closed');
+    await f.controller.requestClose(row.id, 'worker_recovery');
+    assert.equal(f.lifecycle.filter(record => record.event === 'voice_close_requested').length, 0);
     assert.equal((await f.wallet()).reserved_nano, '0');
   } finally { await f.cleanup(); }
 });

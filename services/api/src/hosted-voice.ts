@@ -368,10 +368,18 @@ export class HostedVoice {
     if (row?.provider_session_id && row.state !== 'closed') await this.provider.hangup(row.provider_session_id).catch(error => this.diagnostics.record('voice_hangup_failed', { operation: 'voice.hangup', sessionReference: errorReference(id) }, error));
   }
   async requestClose(id: string, reason: 'user_requested' | 'worker_recovery' | 'usage_limit' | 'deadline' | 'funding_reversed' | 'worker_shutdown' | 'sign_out') {
-    await this.db.query(`UPDATE hosted_sessions SET state=CASE WHEN state='incomplete' THEN state ELSE 'closing' END,
-      close_requested_at=COALESCE(close_requested_at,$2),close_reason=COALESCE(close_reason,$3) WHERE id=$1 AND state<>'closed'`, [id, new Date(this.now()), reason]);
+    // Lock the prior value so concurrent recovery requests log the durable transition once,
+    // including sessions whose provider connection never produced an in-memory slot.
+    const updated = await this.db.query(`WITH previous AS MATERIALIZED (
+      SELECT id,close_requested_at IS NULL AS first_request FROM hosted_sessions WHERE id=$1 AND state<>'closed' FOR UPDATE
+    ) UPDATE hosted_sessions h SET state=CASE WHEN h.state='incomplete' THEN h.state ELSE 'closing' END,
+      close_requested_at=COALESCE(h.close_requested_at,$2),close_reason=COALESCE(h.close_reason,$3)
+      FROM previous WHERE h.id=previous.id RETURNING previous.first_request`, [id, new Date(this.now()), reason]);
     const slot = this.slots.get(id);
-    if (slot && !slot.closeLogged) { slot.closeLogged = true; this.diagnostics.record('voice_close_requested', { operation: `voice.close.${reason}`, sessionReference: errorReference(id) }); }
+    if (updated.rows[0] && (slot ? !slot.closeLogged : updated.rows[0].first_request)) {
+      if (slot) slot.closeLogged = true;
+      this.diagnostics.record('voice_close_requested', { operation: `voice.close.${reason}`, sessionReference: errorReference(id) });
+    }
     try { this.slots.get(id)?.connection?.closeSession(); } catch { await this.connectionLost(id); }
   }
   async status(account: string, id: string) {
