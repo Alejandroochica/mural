@@ -26,16 +26,22 @@ data class Passage(val id: String, val speaker: Speaker, val fragments: List<Fra
         /** Join fragment texts. Insert one space only when both sides lack boundary whitespace
          *  and the next fragment does not start with punctuation (so "Hei" + "!" stays "Hei!"). */
         fun join(parts: List<String>): String = parts.fold("") { result, part ->
-            val first = part.firstOrNull()
-            val last = result.lastOrNull()
+            val first = part.takeIf { it.isNotEmpty() }?.codePointAt(0)
+            val last = result.takeIf { it.isNotEmpty() }?.codePointBefore(result.length)
             when {
                 result.isEmpty() -> part
                 last == null || first == null -> result + part
-                last.isWhitespace() || first.isWhitespace() || isPunctuation(first) -> result + part
+                Character.isWhitespace(last) || Character.isSpaceChar(last) || Character.isWhitespace(first) || Character.isSpaceChar(first) || isPunctuation(first) || isUnspacedBoundary(last, first) -> result + part
                 else -> "$result $part"
             }
         }
-        private fun isPunctuation(c: Char): Boolean {
+        private fun isUnspacedBoundary(last: Int, first: Int): Boolean {
+            fun han(c: Int) = c in 0x3400..0x4DBF || c in 0x4E00..0x9FFF || c in 0xF900..0xFAFF || c in 0x20000..0x323AF
+            val type = Character.getType(last)
+            val opening = type == Character.START_PUNCTUATION.toInt() || type == Character.INITIAL_QUOTE_PUNCTUATION.toInt()
+            return opening || (han(first) && (han(last) || last in 0x3000..0x303F || last in 0xFF00..0xFFEF))
+        }
+        private fun isPunctuation(c: Int): Boolean {
             val type = Character.getType(c)
             return type == Character.CONNECTOR_PUNCTUATION.toInt() ||
                 type == Character.DASH_PUNCTUATION.toInt() ||

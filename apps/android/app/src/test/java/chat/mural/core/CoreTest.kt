@@ -28,6 +28,14 @@ class CoreTest {
         val d=Fragment(id="d",speaker=Speaker.assistant,text="!",startMS=100,endMS=150)
         assertEquals("Hei!",Transcript.passages(listOf(c,d))[0].text)
     }
+    @Test fun joiningPreservesMandarinAndUnicodeBoundaries() {
+        assertEquals("我喜欢咖啡。你呢？", Passage.join(listOf("我", "喜欢", "咖啡。", "你呢？")))
+        assertEquals("“Hola!”", Passage.join(listOf("“", "Hola", "!”")))
+        val punctuation = String(Character.toChars(0x10100))
+        assertEquals("Hola" + punctuation, Passage.join(listOf("Hola", punctuation)))
+        assertEquals("Hola\u00A0mundo", Passage.join(listOf("Hola\u00A0", "mundo")))
+        assertEquals("Hello. Again.", Passage.join(listOf("", "Hello.", "", "Again.")))
+    }
     @Test fun supportedAndWrongLanguageEvidenceCannotBecomeIndependent() {
         val supported=evidence(supported=true)
         assertEquals(EvidenceKind.assisted,LearningEngine.validate(supported.assessments[0],supported)!!.words[0].kind)

@@ -33,6 +33,13 @@ final class LearningTests: XCTestCase {
         ]
         XCTAssertEqual(Transcript.passages(punctuated).first?.text, "Hei!")
     }
+    func testJoinPreservesMandarinAndUnicodeBoundaries() {
+        XCTAssertEqual(Passage.join(["我", "喜欢", "咖啡。", "你呢？"]), "我喜欢咖啡。你呢？")
+        XCTAssertEqual(Passage.join(["“", "Hola", "!”"]), "“Hola!”")
+        XCTAssertEqual(Passage.join(["Hola", "\u{10100}"]), "Hola\u{10100}")
+        XCTAssertEqual(Passage.join(["Hola\u{00A0}", "mundo"]), "Hola\u{00A0}mundo")
+        XCTAssertEqual(Passage.join(["", "Hello.", "", "Again."]), "Hello. Again.")
+    }
     func testLateFragmentsRebuildEarlierPassageAndInvalidateEvidence() {
         var s = fixture()
         s.append(Fragment(id: "late", speaker: .user, text: " kanskje", startMS: 2100, endMS: 2500))
