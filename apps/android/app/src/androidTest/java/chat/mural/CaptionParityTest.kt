@@ -264,6 +264,51 @@ class CaptionParityTest {
         compose.runOnIdle { assertEquals(1, vm.session!!.fragments.count { it.speaker == Speaker.user }) }
     }
 
+    @Test fun longMeaningRequestKeepsEveryCharacterAndCachesTheFullRevision() {
+        val caption = "UNIQUE_START " + "我喜欢咖啡。 ".repeat(600) + " UNIQUE_END"
+        response = "The entire caption, including its beginning and end."
+        show("zh", caption, "")
+        requests.clear()
+        compose.runOnIdle {
+            MuralViewModel::class.java.getDeclaredMethod("scheduleTranslation", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(vm, true)
+        }
+        compose.waitUntil(10_000) { vm.meaning == response }
+        val request = Json.parseToJsonElement(checkNotNull(requests.poll(2, TimeUnit.SECONDS))).jsonObject
+        assertEquals(caption, request.getValue("input").jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content)
+        compose.runOnIdle {
+            val passage = vm.session!!.passages.single()
+            assertEquals(response, vm.session!!.translations[MeaningRequest.cacheKey(passage.revisionKey, "English")])
+        }
+        compose.onNodeWithTag("start-conversation").assertIsDisplayed()
+        compose.onNodeWithTag("floating-navigation").assertIsDisplayed()
+    }
+
+    @Test fun oversizedHostedMeaningShowsLimitWithoutDispatchOrRetry() {
+        show("zh", "我".repeat(8193), "")
+        requests.clear()
+        compose.runOnIdle {
+            val hosted = MuralViewModel::class.java.getDeclaredField("hostedSessionIDs").apply { isAccessible = true }
+            hosted.set(vm, setOf(vm.session!!.id))
+            MuralViewModel::class.java.getDeclaredMethod("scheduleTranslation", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(vm, true)
+        }
+        compose.waitUntil(10_000) { vm.meaningLimitReached }
+        compose.onNodeWithText(compose.activity.getString(R.string.talk_meaning_too_long)).assertIsDisplayed()
+        compose.onNodeWithText(compose.activity.getString(R.string.talk_retry_meaning_button)).assertDoesNotExist()
+        assertTrue("An oversized hosted caption must not reach the provider", requests.isEmpty())
+        compose.runOnIdle {
+            MuralViewModel::class.java.getDeclaredField("hostedSessionIDs").apply { isAccessible = true }.set(vm, emptySet<String>())
+        }
+        show("zh", "你好。", "")
+        compose.runOnIdle {
+            MuralViewModel::class.java.getDeclaredMethod("scheduleTranslation", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(vm, true)
+        }
+        compose.waitUntil(10_000) { vm.meaning == response }
+        compose.runOnIdle { assertFalse(vm.meaningLimitReached) }
+    }
+
     @Test fun lookupKeepsItsSentenceAndDismissalCancelsTheOldResult() {
         val sentence = "Quiero un café con leche."
         show("es", sentence, "I want a coffee with milk.")
