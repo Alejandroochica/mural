@@ -203,7 +203,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         if (archive.preferences.aiConsentVersion != 1) throw IllegalStateException("AI processing consent is required.")
         val module = LanguageRegistry.get(request.learningLanguageID) ?: throw IllegalStateException("Unsupported language.")
         val result = teaching(request.sessionID, HelperPurpose.MEANING, request.cacheKey,
-            TeachingPolicy.translation(module, request.meaningLanguage), request.text.takeLast(2200))
+            TeachingPolicy.translation(module, request.meaningLanguage), request.translationInput)
         MeaningResult(result.text, result.usage.input, result.usage.output)
     }
     private val finalAssessments = FinalAssessmentQueue(viewModelScope) { snapshot, passage -> requestAssessment(snapshot, passage) }
