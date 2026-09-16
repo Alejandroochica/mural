@@ -143,7 +143,14 @@ public struct SessionRecord: Codable, Identifiable, Sendable {
         guard let index = fragments.firstIndex(where: { $0.id == id }) else { return }
         fragments[index].previousTexts.append(fragments[index].text)
         fragments[index].text = text; fragments[index].revision += 1
-        translations.removeAll(); invalidateChangedAssessments()
+        translations = translations.filter { !Self.translationKey($0.key, includesFragment: id) }
+        invalidateChangedAssessments()
+    }
+    private static func translationKey(_ key: String, includesFragment id: String) -> Bool {
+        guard let revision = key.split(separator: "::", maxSplits: 1).last else { return false }
+        return revision.split(separator: ",").contains {
+            $0.split(separator: ":", maxSplits: 1).first.map(String.init) == id
+        }
     }
 }
 

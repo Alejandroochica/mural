@@ -99,6 +99,15 @@ final class LearningTests: XCTestCase {
         XCTAssertTrue(s.assessments.isEmpty)
         XCTAssertTrue(LearningEngine.project([s]).words.isEmpty)
     }
+    func testCorrectedFragmentOnlyDropsAffectedTranslations() {
+        var s = fixture()
+        let id = s.fragments[0].id
+        s.translations["English::\(id):0"] = "I went into the forest."
+        s.translations["English::other:0"] = "Unrelated meaning"
+        s.correctFragment(id: id, text: "I went for a walk.")
+        XCTAssertNil(s.translations["English::\(id):0"])
+        XCTAssertEqual(s.translations["English::other:0"], "Unrelated meaning")
+    }
     func testArchiveRoundTripAndVersionGuard() throws {
         var archive = Archive(); archive.sessions = [fixture()]
         let decoded = try Archive.decode(archive.encoded())
