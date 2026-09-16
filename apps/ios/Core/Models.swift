@@ -25,7 +25,20 @@ public struct Passage: Identifiable, Sendable {
     public var id: String
     public var speaker: Speaker
     public var fragments: [Fragment]
-    public var text: String { fragments.map(\.text).joined() }
+    public var text: String { Self.join(fragments.map(\.text)) }
+    /// Join fragment texts. Insert one space only when both sides lack boundary whitespace
+    /// and the next fragment does not start with punctuation (so "Hei" + "!" stays "Hei!").
+    public static func join(_ parts: [String]) -> String {
+        parts.reduce(into: "") { result, part in
+            if result.isEmpty { result = part; return }
+            guard let last = result.last, let first = part.first else {
+                result.append(part); return
+            }
+            let needsSpace = !last.isWhitespace && !first.isWhitespace && !first.isPunctuation
+            if needsSpace { result.append(" ") }
+            result.append(part)
+        }
+    }
     public var revisionKey: String { fragments.map { "\($0.id):\($0.revision)" }.joined(separator: ",") }
     public var startMS: Int { fragments.first?.startMS ?? 0 }
     public var endMS: Int { fragments.map(\.endMS).max() ?? 0 }

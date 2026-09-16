@@ -20,6 +20,14 @@ class CoreTest {
         val typed=Fragment(id="c",speaker=Speaker.assistant,text="typed",startMS=500,endMS=600,typed=true)
         assertEquals(2,Transcript.passages(listOf(a,b,typed)).size)
     }
+    @Test fun transcriptConcatenationInsertsSpaceBetweenBareFragmentBoundaries() {
+        val a=Fragment(id="a",speaker=Speaker.assistant,text="It is easy.",startMS=0,endMS=100)
+        val b=Fragment(id="b",speaker=Speaker.assistant,text="Now you?",startMS=400,endMS=700)
+        assertEquals("It is easy. Now you?",Transcript.passages(listOf(a,b))[0].text)
+        val c=Fragment(id="c",speaker=Speaker.assistant,text="Hei",startMS=0,endMS=100)
+        val d=Fragment(id="d",speaker=Speaker.assistant,text="!",startMS=100,endMS=150)
+        assertEquals("Hei!",Transcript.passages(listOf(c,d))[0].text)
+    }
     @Test fun supportedAndWrongLanguageEvidenceCannotBecomeIndependent() {
         val supported=evidence(supported=true)
         assertEquals(EvidenceKind.assisted,LearningEngine.validate(supported.assessments[0],supported)!!.words[0].kind)

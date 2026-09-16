@@ -21,7 +21,31 @@ data class Fragment(
 )
 
 data class Passage(val id: String, val speaker: Speaker, val fragments: List<Fragment>) {
-    val text get() = fragments.joinToString("") { it.text }
+    val text get() = join(fragments.map { it.text })
+    companion object {
+        /** Join fragment texts. Insert one space only when both sides lack boundary whitespace
+         *  and the next fragment does not start with punctuation (so "Hei" + "!" stays "Hei!"). */
+        fun join(parts: List<String>): String = parts.fold("") { result, part ->
+            val first = part.firstOrNull()
+            val last = result.lastOrNull()
+            when {
+                result.isEmpty() -> part
+                last == null || first == null -> result + part
+                last.isWhitespace() || first.isWhitespace() || isPunctuation(first) -> result + part
+                else -> "$result $part"
+            }
+        }
+        private fun isPunctuation(c: Char): Boolean {
+            val type = Character.getType(c)
+            return type == Character.CONNECTOR_PUNCTUATION.toInt() ||
+                type == Character.DASH_PUNCTUATION.toInt() ||
+                type == Character.START_PUNCTUATION.toInt() ||
+                type == Character.END_PUNCTUATION.toInt() ||
+                type == Character.INITIAL_QUOTE_PUNCTUATION.toInt() ||
+                type == Character.FINAL_QUOTE_PUNCTUATION.toInt() ||
+                type == Character.OTHER_PUNCTUATION.toInt()
+        }
+    }
     val revisionKey get() = fragments.joinToString(",") { "${it.id}:${it.revision}" }
     val startMS get() = fragments.firstOrNull()?.startMS ?: 0
     val endMS get() = fragments.maxOfOrNull { it.endMS } ?: 0
