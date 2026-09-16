@@ -4,7 +4,7 @@ This change addresses issues #29, #35, #36, #37 and #38, plus the persona/accent
 
 ## Review scope and coordination
 
-The review baseline is `codex/conversation-foundation`: current main plus the other task’s published #57 (`b9defbc`) and #61 (`698cf7d`). The draft compares against that baseline so its diff contains only this task’s work. Those two PRs still need their own approval. After they merge, retarget this draft to main and verify the resulting diff and checks before considering a merge.
+The review baseline is `codex/conversation-foundation`: current main plus the other task’s published #57 (`b9defbc`) and #61 (`698cf7d`). The local review compares against that baseline so its diff contains only this task’s work. Publication of the branches and draft PR is awaiting explicit approval after automatic approval review blocked the push. Those two PRs still need their own approval. After they merge, retarget this draft to main and verify the resulting diff and checks before considering a merge.
 
 The other task owns #41/#48, #49, #57 and #61. Its already merged #56/#58/#59 are included from main. The 30-second cutoff and accent direction build on Boris’s #43 and #44; his contribution is credited in the implementation commit. No PR or issue was closed by this task.
 
