@@ -1003,7 +1003,12 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 typedRepliesSent++
                 scheduleAssessment()
             } catch (_: CancellationException) { }
-            catch (e: Exception) { if (session?.id == id) typedReplyError = resolveMessage(e, R.string.error_send_message_failed) }
+            catch (e: Exception) {
+                if (session?.id == id) {
+                    typedReplyError = resolveMessage(e, R.string.error_send_message_failed)
+                    if (errorNeedsKeySetup(e) || needsAccountRecovery(e)) presentError(e, R.string.error_send_message_failed)
+                }
+            }
             finally { if (token == generation) working = false }
         }
     }
