@@ -205,6 +205,65 @@ class CaptionParityTest {
         }
     }
 
+    @Test fun endingKeepsOnlyTheSpecificEndReasonNotice() {
+        for (reason in listOf("Inactivity", "Time limit", "Ended by you")) {
+            show("es", "Hola.", "Hello.")
+            compose.runOnIdle {
+                state("notice", "Stale help notice")
+                vm.end(reason)
+                val expected = when (reason) {
+                    "Inactivity" -> compose.activity.getString(R.string.notice_ended_inactivity)
+                    "Time limit" -> compose.activity.getString(R.string.notice_time_limit_reached)
+                    else -> null
+                }
+                assertEquals("ended", vm.state)
+                assertEquals(expected, vm.notice)
+            }
+        }
+    }
+
+    @Test fun typedReplyFailureRetriesWithoutDuplicateTranscriptRows() {
+        show("es", "Hola.", "Hello.")
+        responseCode = 503
+        val typeButton = compose.onNodeWithText(compose.activity.getString(R.string.talk_type_button))
+        if (!typeButton.isDisplayed()) typeButton.performScrollTo()
+        typeButton.performClick()
+        compose.onNodeWithTag("typed-reply-input").performTextInput("Quiero un café.")
+        compose.onNodeWithTag("typed-reply-send").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("typed-reply-error").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("typed-reply-error").assertIsDisplayed()
+        compose.onNodeWithTag("typed-reply-input").assertTextContains("Quiero un café.")
+        capture("typed-reply-failure")
+        compose.runOnIdle { assertEquals(0, vm.session!!.fragments.count { it.speaker == Speaker.user }); assertNull(vm.error) }
+        responseCode = 200; response = "Gracias."
+        compose.onNodeWithTag("typed-reply-send").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("typed-reply-input").fetchSemanticsNodes().isEmpty() }
+        compose.runOnIdle {
+            assertEquals(listOf("Quiero un café."), vm.session!!.fragments.filter { it.speaker == Speaker.user }.map { it.text })
+            assertNull(vm.typedReplyError)
+        }
+    }
+
+    @Test fun typedReplyAuthenticationFailureKeepsRecoveryActionAndDraft() {
+        show("es", "Hola.", "Hello.")
+        responseCode = 401
+        val typeButton = compose.onNodeWithText(compose.activity.getString(R.string.talk_type_button))
+        if (!typeButton.isDisplayed()) typeButton.performScrollTo()
+        typeButton.performClick()
+        compose.onNodeWithTag("typed-reply-input").performTextInput("Quiero un café.")
+        compose.onNodeWithTag("typed-reply-send").performClick()
+        compose.waitUntil(10_000) { vm.errorNeedsKeySetup }
+        compose.onNodeWithText(compose.activity.getString(R.string.error_go_to_settings)).assertIsDisplayed()
+        compose.onNodeWithText(compose.activity.getString(R.string.common_ok)).performClick()
+        compose.onNodeWithTag("typed-reply-input").assertTextContains("Quiero un café.")
+        compose.onNodeWithTag("typed-reply-error").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, vm.session!!.fragments.count { it.speaker == Speaker.user }) }
+        responseCode = 200; response = "Gracias."
+        compose.onNodeWithTag("typed-reply-send").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("typed-reply-input").fetchSemanticsNodes().isEmpty() }
+        compose.runOnIdle { assertEquals(1, vm.session!!.fragments.count { it.speaker == Speaker.user }) }
+    }
+
     @Test fun lookupKeepsItsSentenceAndDismissalCancelsTheOldResult() {
         val sentence = "Quiero un café con leche."
         show("es", sentence, "I want a coffee with milk.")
