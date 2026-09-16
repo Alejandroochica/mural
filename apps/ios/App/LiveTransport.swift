@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MuralCore
 @preconcurrency import WebRTC
 
 enum ConnectionState: Equatable { case idle, connecting, active, closing, ended, failed }
@@ -19,6 +20,10 @@ enum ConnectionState: Equatable { case idle, connecting, active, closing, ended,
     private var closing = false
     private var ownsAudioActivation = false
     private var lastInput = 0.0, lastOutput = 0.0
+    private lazy var networkRecovery = VoiceConnectionRecovery { [weak self] in
+        guard let self, self.peer != nil, !self.closing else { return }
+        self.onFailure?("The network connection was lost. Tap to start a new conversation.")
+    }
 
     func connect(api: APIClient, instructions: String, history: [[String: Any]]) async throws {
         disconnect()
@@ -104,10 +109,12 @@ enum ConnectionState: Equatable { case idle, connecting, active, closing, ended,
         _ = send(["type": muted ? "session.input_audio.mute" : "session.input_audio.unmute", "event_id": UUID().uuidString])
     }
     func close() {
+        networkRecovery.connected()
         closing = true; localTrack?.isEnabled = false; isMuted = true
         _ = send(["type": "session.close", "event_id": UUID().uuidString])
     }
     func disconnect() {
+        networkRecovery.connected()
         attempt = UUID(); meterTask?.cancel(); meterTask = nil
         started = false; closing = true
         localTrack?.isEnabled = false; localTrack = nil
@@ -179,7 +186,14 @@ extension LiveTransport: RTCDataChannelDelegate, RTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         Task { @MainActor [weak self] in
             guard let self, peerConnection === self.peer, !self.closing else { return }
-            if newState == .failed { self.onFailure?("The network connection was lost. Tap to start a new conversation.") }
+            switch newState {
+            case .disconnected: self.networkRecovery.disconnected()
+            case .connected, .completed: self.networkRecovery.connected()
+            case .failed:
+                self.networkRecovery.connected()
+                self.onFailure?("The network connection was lost. Tap to start a new conversation.")
+            default: break
+            }
         }
     }
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
