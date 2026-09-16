@@ -32,6 +32,16 @@ class EvidenceTest {
         }
         assertNull(LearningEngine.validate(a.copy(revisionKey="old"),s))
     }
+    @Test fun quoteAcrossBareFragmentBoundaryIsKept() {
+        val session = SessionRecord(languageID = "es")
+        session.append(Fragment(id="f1",speaker=Speaker.user,text="Me gusta",startMS=0,endMS=500))
+        session.append(Fragment(id="f2",speaker=Speaker.user,text="el café",startMS=600,endMS=1200))
+        val passage = session.passages.single()
+        assertEquals("Me gusta el café", passage.text)
+        session.assessments += Assessment(passage.id, passage.revisionKey, Outcome.success, 1, "Sigue.", "Expresses liking",
+            listOf(WordProposal("gustar","to like","gusta",EvidenceKind.independent,0.95,listOf("f1","f2"),"Me gusta el café","es")))
+        assertEquals(1, LearningEngine.validate(session.assessments.single(), session)!!.words.size)
+    }
     @Test fun hiddenWordsAreLanguageScopedAndRepetitionIsDeduplicated() {
         val s = record(); val a = s.assessments.single(); s.assessments += a.copy()
         assertEquals(1,LearningEngine.project(listOf(s),"es").observationCount)
