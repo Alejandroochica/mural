@@ -348,7 +348,13 @@ import MuralCore
         let sample = ["nb": "Jeg liker kaffe.", "de": "Ich mag Kaffee.", "it": "Mi piace il caffè.", "pt": "Eu gosto de café.", "zh": "我喜欢喝咖啡。"]
         record.append(Fragment(speaker: .assistant, text: sample[language.id] ?? language.greeting, startMS: 0, endMS: 1000))
         record.translations[MeaningRequest.cacheKey(revisionKey: record.passages[0].revisionKey, language: "English")] = "I like coffee."
-        session = record; state = .closing; finish(final: true)
+        let arguments = ProcessInfo.processInfo.arguments
+        let checkNotice = arguments.contains("--test-end-notice")
+        if checkNotice {
+            record.providerID = "fixture-only"
+            notice = arguments.contains("--test-inactivity") ? "Mural ended this quiet session to avoid running up usage." : "Mural will make that a little simpler."
+        }
+        session = record; state = .closing; finish(final: !checkNotice)
     }
     #endif
     #if DEBUG && targetEnvironment(simulator)

@@ -39,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.focusRequester
@@ -305,11 +306,13 @@ private fun RoundAction(symbol: MuralSymbol, label: String, selected: Boolean = 
     }
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (String) -> Unit, onDismiss: () -> Unit,
     error: String? = null, completedSends: Int = 0, onOpen: () -> Unit = {}) {
     val initialSends = rememberSaveable { completedSends }
+    val sendIntoView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    androidx.compose.runtime.LaunchedEffect(error) { if (error != null) sendIntoView.bringIntoView() }
     androidx.compose.runtime.LaunchedEffect(Unit) { onOpen() }
     androidx.compose.runtime.LaunchedEffect(completedSends) { if (completedSends > initialSends) onDismiss() }
     var text by rememberSaveable { mutableStateOf("") }
@@ -317,7 +320,7 @@ internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (St
     var requestedFocus by remember { mutableStateOf(false) }
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MuralColors.Cream,
         sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 26.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.talk_typed_reply_title), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                 SoftRoundButton(MuralSymbol.Close, stringResource(R.string.common_close), onDismiss, diameter = 40.dp)
@@ -331,7 +334,7 @@ internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (St
             if (error != null) Text(error, color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.testTag("typed-reply-error"))
             Button(onClick = { onSend(text.trim()) }, enabled = text.isNotBlank() && !working,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("typed-reply-send"), shape = CircleShape) {
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).bringIntoViewRequester(sendIntoView).testTag("typed-reply-send"), shape = CircleShape) {
                 Text(stringResource(R.string.talk_typed_reply_send_button)); Spacer(Modifier.width(8.dp))
                 MuralIcon(MuralSymbol.ArrowUp, Modifier.size(18.dp))
             }

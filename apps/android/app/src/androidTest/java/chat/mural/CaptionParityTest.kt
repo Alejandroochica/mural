@@ -208,12 +208,15 @@ class CaptionParityTest {
     @Test fun typedReplyFailureRetriesWithoutDuplicateTranscriptRows() {
         show("es", "Hola.", "Hello.")
         responseCode = 503
-        compose.onNodeWithText(compose.activity.getString(R.string.talk_type_button)).performScrollTo().performClick()
+        val typeButton = compose.onNodeWithText(compose.activity.getString(R.string.talk_type_button))
+        if (!typeButton.isDisplayed()) typeButton.performScrollTo()
+        typeButton.performClick()
         compose.onNodeWithTag("typed-reply-input").performTextInput("Quiero un café.")
         compose.onNodeWithTag("typed-reply-send").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("typed-reply-error").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("typed-reply-error").assertIsDisplayed()
         compose.onNodeWithTag("typed-reply-input").assertTextContains("Quiero un café.")
+        capture("typed-reply-failure")
         compose.runOnIdle { assertEquals(0, vm.session!!.fragments.count { it.speaker == Speaker.user }); assertNull(vm.error) }
         responseCode = 200; response = "Gracias."
         compose.onNodeWithTag("typed-reply-send").performClick()

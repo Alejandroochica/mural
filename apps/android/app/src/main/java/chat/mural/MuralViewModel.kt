@@ -734,6 +734,11 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         transport.disconnect(); inputLevel = 0.0; outputLevel = 0.0; working = false; isMuted = false
         updateSession { it.endedAt = nowSeconds(); it.usageFinal = final }
         state = "ended"
+        notice = when (session?.endReason) {
+            "Inactivity" -> getApplication<Application>().getString(R.string.notice_ended_inactivity)
+            "Time limit" -> getApplication<Application>().getString(R.string.notice_time_limit_reached)
+            else -> null
+        }
         session?.let {
             if (it.id in hostedSessionIDs) {
                 hostedBindings.ended(it.id); reconcileHostedSessions(); finishHostedAssessment(clone(it))
