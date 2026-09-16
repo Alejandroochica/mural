@@ -72,7 +72,8 @@ public enum LearningEngine {
         for session in sessions.filter({ $0.languageID == languageID }).sorted(by: { $0.startedAt < $1.startedAt }) {
             var seen = Set<String>()
             for raw in session.assessments.sorted(by: { $0.createdAt < $1.createdAt }) {
-                guard seen.insert(raw.passageID).inserted, let a = validate(raw, session: session) else { continue }
+                guard !seen.contains(raw.passageID), let a = validate(raw, session: session) else { continue }
+                seen.insert(raw.passageID)
                 count += 1
                 if a.outcome == .breakdown { level = max(0, level - 1); successes = 0 }
                 else if a.outcome == .success {
