@@ -63,6 +63,17 @@ final class LearningTests: XCTestCase {
         XCTAssertEqual(projection.words[0].independentCount, 1)
         XCTAssertEqual(projection.observationCount, 1)
     }
+    func testInvalidAssessmentDoesNotBlockALaterValidOneForTheSamePassage() {
+        var s = fixture()
+        let valid = s.assessments[0]
+        var invalid = valid
+        invalid.revisionKey = "stale"
+        invalid.createdAt = valid.createdAt.addingTimeInterval(-1)
+        s.assessments = [invalid, valid]
+        let projection = LearningEngine.project([s], now: s.startedAt)
+        XCTAssertEqual(projection.observationCount, 1)
+        XCTAssertEqual(projection.words.count, 1)
+    }
     func testDuplicateWordProposalsNeverDoubleCredit() {
         var s = fixture(); s.assessments[0].words += s.assessments[0].words
         XCTAssertEqual(LearningEngine.project([s], now: s.startedAt).words[0].independentCount, 1)
@@ -87,6 +98,15 @@ final class LearningTests: XCTestCase {
         var s = fixture(); s.correctFragment(id: s.fragments[0].id, text: "I went for a walk.")
         XCTAssertTrue(s.assessments.isEmpty)
         XCTAssertTrue(LearningEngine.project([s]).words.isEmpty)
+    }
+    func testCorrectedFragmentOnlyDropsAffectedTranslations() {
+        var s = fixture()
+        let id = s.fragments[0].id
+        s.translations["English::\(id):0"] = "I went into the forest."
+        s.translations["English::other:0"] = "Unrelated meaning"
+        s.correctFragment(id: id, text: "I went for a walk.")
+        XCTAssertNil(s.translations["English::\(id):0"])
+        XCTAssertEqual(s.translations["English::other:0"], "Unrelated meaning")
     }
     func testArchiveRoundTripAndVersionGuard() throws {
         var archive = Archive(); archive.sessions = [fixture()]

@@ -45,8 +45,9 @@ object LearningEngine {
         for (session in sessions.filter { it.languageID==languageID }.sortedBy { it.startedAt }) {
             val seen=mutableSetOf<String>()
             for (raw in session.assessments.sortedBy { it.createdAt }) {
-                if (!seen.add(raw.passageID)) continue
+                if (raw.passageID in seen) continue
                 val a=validate(raw,session) ?: continue
+                seen.add(raw.passageID)
                 count++
                 when(a.outcome) {
                     Outcome.breakdown -> { level=(level-1).coerceAtLeast(0); successes=0 }

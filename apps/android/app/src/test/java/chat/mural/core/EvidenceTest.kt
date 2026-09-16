@@ -13,8 +13,11 @@ class EvidenceTest {
     }
     @Test fun correctionsRevokeEvidenceAndTranslationsKeepPreviousText() {
         val s = record(); s.translations["English::target:0"] = "the house"
+        s.translations["English::other:0"] = "unrelated"
         s.correctFragment("target", "la calle")
-        assertTrue(s.assessments.isEmpty()); assertTrue(s.translations.isEmpty())
+        assertTrue(s.assessments.isEmpty())
+        assertNull(s.translations["English::target:0"])
+        assertEquals("unrelated", s.translations["English::other:0"])
         assertEquals(listOf("la casa"), s.fragments.single().previousTexts)
         assertEquals(1, s.fragments.single().revision)
     }
@@ -45,5 +48,14 @@ class EvidenceTest {
         val third = record().copy(startedAt=first.startedAt+2)
         third.assessments = mutableListOf(third.assessments.single().copy(outcome=Outcome.breakdown))
         assertEquals(0,LearningEngine.project(listOf(first,second,third),"es").challenge)
+    }
+    @Test fun invalidAssessmentDoesNotBlockALaterValidOneForTheSamePassage() {
+        val s = record()
+        val valid = s.assessments.single()
+        val invalid = valid.copy(revisionKey = "stale", createdAt = valid.createdAt - 1)
+        s.assessments = mutableListOf(invalid, valid)
+        val projection = LearningEngine.project(listOf(s), "es")
+        assertEquals(1, projection.observationCount)
+        assertEquals(1, projection.words.size)
     }
 }
