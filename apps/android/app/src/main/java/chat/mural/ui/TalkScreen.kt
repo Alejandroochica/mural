@@ -134,7 +134,7 @@ fun TalkScreen(
             modifier = Modifier.size(orbSize),
         )
         Box(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp), contentAlignment = Alignment.Center) {
-            Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession), style = MaterialTheme.typography.bodySmall,
+            Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession, vm.inactivitySeconds), style = MaterialTheme.typography.bodySmall,
                 color = MuralColors.Secondary, modifier = Modifier.testTag("conversation-status"))
             if (assistantPassage != null && passage?.isNotBlank() == true) {
                 Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
@@ -334,9 +334,9 @@ internal fun TypedReplySheet(languageName: String, working: Boolean, onSend: (St
 
 
 @Composable
-private fun statusText(state: String, muted: Boolean, voice: Boolean) = when (state) {
+private fun statusText(state: String, muted: Boolean, voice: Boolean, inactivitySeconds: Int? = null) = when (state) {
     "connecting" -> stringResource(R.string.talk_status_connecting)
-    "active" -> if (!voice) stringResource(R.string.talk_status_written) else if (muted) stringResource(R.string.talk_status_muted) else stringResource(R.string.talk_status_listening)
+    "active" -> if (inactivitySeconds != null && voice) stringResource(R.string.talk_inactivity_warning, inactivitySeconds) else if (!voice) stringResource(R.string.talk_status_written) else if (muted) stringResource(R.string.talk_status_muted) else stringResource(R.string.talk_status_listening)
     "closing" -> stringResource(R.string.talk_status_closing)
     "ended" -> stringResource(R.string.talk_status_ended)
     "failed" -> stringResource(R.string.talk_status_failed)

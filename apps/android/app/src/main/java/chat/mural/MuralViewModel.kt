@@ -29,12 +29,17 @@ internal fun errorMessageRes(e: Throwable): Int = when (e) {
     is APIClient.APIException.MissingKey -> R.string.error_missing_key
     is APIClient.APIException.Refused -> R.string.error_request_refused
     is APIClient.APIException.InvalidResponse, is APIClient.APIException.Incomplete -> R.string.error_incomplete_response
-    is APIClient.APIException.Http -> when (e.status) {
-        401 -> R.string.error_http_401
-        403, 404 -> R.string.error_http_403_404
-        429 -> R.string.error_http_429
-        else -> R.string.error_http_generic
+    is APIClient.APIException.Http -> when (e.kind) {
+        ProviderFailureKind.authentication -> R.string.error_http_401
+        ProviderFailureKind.modelAccess -> R.string.error_http_403_404
+        ProviderFailureKind.quota -> R.string.error_provider_quota
+        ProviderFailureKind.rateLimit -> R.string.error_http_429
+        ProviderFailureKind.unavailable -> R.string.error_provider_unavailable
+        ProviderFailureKind.invalidRequest -> R.string.error_provider_request
+        ProviderFailureKind.unknown -> R.string.error_http_generic
     }
+    is java.net.SocketTimeoutException -> R.string.error_request_timeout
+    is java.net.UnknownHostException, is java.net.ConnectException -> R.string.error_request_connection
     is CredentialStore.CredentialException.Invalid -> R.string.error_key_invalid
     is CredentialStore.CredentialException.Save -> R.string.error_key_save
     is CredentialStore.CredentialException.Remove -> R.string.error_key_remove
@@ -49,13 +54,20 @@ internal fun hostedErrorMessageRes(failure: HostedFailure): Int = when (failure)
     is HostedFailure.Http -> when {
         needsAccountRecovery(failure) -> R.string.hosted_sign_in_again
         failure.code in setOf("insufficient_minutes", "insufficient_credit") -> R.string.hosted_no_minutes
+        failure.code == "helper_session_limit" && failure.retryable == true -> R.string.hosted_help_busy
+        failure.code == "helper_concurrency_limit" -> R.string.hosted_help_busy
         failure.code in setOf("helper_budget_exhausted", "helper_session_limit") -> R.string.hosted_extra_help_limit
+        failure.code == "helper_output_refused" -> R.string.error_request_refused
+        failure.code == "helper_output_incomplete" -> R.string.error_incomplete_response
+        failure.code == "provider_connection_lost" -> R.string.error_transport_network_lost
+        failure.code == "helper_session_funding_unavailable" -> R.string.hosted_help_funding
+        failure.code in setOf("provider_reconciliation_required", "minute_balance_reconciliation_required", "minute_purchase_reconciliation_required", "helper_provider_reconciliation_required") -> R.string.hosted_balance_checking
         failure.code == "helper_session_window_closed" -> R.string.hosted_window_closed
         failure.code in setOf("helper_request_already_attempted", "helper_response_uncertain", "live_request_already_created", "provider_session_unconfirmed") -> R.string.hosted_unconfirmed
         failure.code == "live_session_unresolved" -> R.string.hosted_checking_previous
         failure.code == "provider_create_rejected" -> R.string.hosted_start_rejected
         failure.status == 429 -> R.string.hosted_rate_limit
-        failure.code in setOf("hosted_voice_not_ready", "hosted_helpers_not_ready") -> R.string.hosted_unavailable
+        failure.code in setOf("hosted_voice_not_ready", "hosted_helpers_not_ready", "hosted_paid_not_ready", "hosted_funding_cap_reached") -> R.string.hosted_unavailable
         else -> R.string.hosted_request_failed
     }
     else -> R.string.hosted_request_failed
@@ -198,6 +210,11 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private val delegations = mutableMapOf<String, Job>()
     private var voiceSession = false
     private var lastActivity = nowSeconds()
+    private var activity = ConversationActivity(activityNow())
+    private var conversationPace = ConversationPace()
+    var inactivitySeconds by mutableStateOf<Int?>(null); private set
+    private fun activityNow() = System.nanoTime() / 1_000_000_000.0
+    fun noteTypingActivity() { if (state == "active" && voiceSession) { activity.typing(activityNow()); inactivitySeconds = null } }
     private var generation = 0
 
     init {
@@ -254,7 +271,10 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         transport.onFailure = { fail(it) }
         transport.onLevels = { input, output ->
             inputLevel = input; outputLevel = output
-            if (input > 0.03 || output > 0.03) lastActivity = nowSeconds()
+            if (state == "active" && voiceSession) {
+                if (input > 0.03) activity.inputActive(activityNow())
+                if (output > 0.03) activity.assistantActive(activityNow())
+            }
         }
         meanings.onChange = { meaning = meanings.text; translating = meanings.isLoading; meaningFailed = meanings.error != null }
         meanings.onResult = { request, result ->
@@ -332,6 +352,8 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
             e is LiveTransport.TransportException -> e.message ?: app.getString(fallback)
             else -> app.getString(fallback)
         }
+        if (e is APIClient.APIException.Http && e.reference != null)
+            return message + "\n\n" + app.getString(R.string.error_provider_reference, e.reference)
         return requestErrorReference(e)?.let { message + "\n\n" + app.getString(R.string.hosted_error_reference, it) } ?: message
     }
     private fun presentError(message: String, needsKeySetup: Boolean = false) {
@@ -621,7 +643,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleMute() { if (state == "active" && voiceSession) { isMuted = !isMuted; transport.mute(isMuted) } }
     fun help() {
         if (state != "active") return
-        if (voiceSession) { command("instructions", TeachingPolicy.help(language)); notice = getApplication<Application>().getString(R.string.notice_help_simpler) }
+        if (voiceSession) { activity.learnerEngaged(activityNow()); inactivitySeconds = null; conversationPace.askForHelp(); command("instructions", conversationPace.instruction); command("instructions", TeachingPolicy.help(language)); notice = getApplication<Application>().getString(R.string.notice_help_simpler) }
         else {
             if (working || !cloudReady()) return
             val snapshot = session ?: return
@@ -762,7 +784,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         when (event["type"]?.jsonPrimitive?.content) {
             "mural.session.created" -> updateSession { it.providerID = (event["session"] as? JsonObject)?.get("id")?.jsonPrimitive?.content; it.voiceSeconds = 15.0 }
             "session.started" -> if (state == "connecting") {
-                state = "active"; lastActivity = nowSeconds()
+                state = "active"; activity = ConversationActivity(activityNow()); conversationPace = ConversationPace(); inactivitySeconds = null
                 updateSession { it.providerID = (event["session"] as? JsonObject)?.get("id")?.jsonPrimitive?.content ?: it.providerID }
                 command("instructions", TeachingPolicy.greeting(language)); startDurationChecks()
             }
@@ -773,7 +795,10 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 if (start < 0 || end < start || text.length > 50000) return
                 val speaker = if (event["type"]?.jsonPrimitive?.content == "session.input_transcript.delta") Speaker.user else Speaker.assistant
                 updateSession { it.append(Fragment(id = event["event_id"]?.jsonPrimitive?.content ?: UUID.randomUUID().toString(), speaker = speaker, text = text, startMS = start, endMS = end, meaningVisible = archive.preferences.meaningVisible)) }
-                lastActivity = nowSeconds()
+                if (text.isNotBlank()) {
+                    if (speaker == Speaker.user) { activity.learnerEngaged(activityNow()); inactivitySeconds = null }
+                    else activity.assistantActive(activityNow())
+                }
                 if (speaker == Speaker.assistant) { scheduleTranslation(); if (state == "active") checkLanguage() } else scheduleAssessment()
             }
             "session.delegation.created" -> {
@@ -792,7 +817,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         durationJob?.cancel()
         durationJob = viewModelScope.launch {
             while (state == "active") {
-                delay(5000)
+                delay(1000)
                 val current = session ?: break
                 if (current.id in hostedSessionIDs && hostedBindings.reachedDeadline(current.id)) {
                     updateSession { it.endReason = "Reserved conversation time ended" }; finish(false); break
@@ -800,7 +825,13 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 if (nowSeconds() - current.startedAt > archive.preferences.sessionMinutes * 60) {
                     notice = getApplication<Application>().getString(R.string.notice_time_limit_reached); end("Time limit"); break
                 }
-                if (SessionLimits.endsForInactivity(voiceSession, nowSeconds() - lastActivity)) { notice = getApplication<Application>().getString(R.string.notice_ended_inactivity); end("Inactivity"); break }
+                inactivitySeconds = null
+                if (voiceSession) when (val next = activity.tick(activityNow(), isMuted, working)) {
+                    ConversationActivity.Action.CheckIn -> command("instructions", TeachingPolicy.checkIn(language))
+                    is ConversationActivity.Action.Warning -> inactivitySeconds = next.seconds
+                    ConversationActivity.Action.End -> { notice = getApplication<Application>().getString(R.string.notice_ended_inactivity); end("Inactivity"); break }
+                    ConversationActivity.Action.Wait -> Unit
+                }
             }
         }
     }
@@ -902,6 +933,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 if (session?.id == updated.id) session = clone(updated)
                 if (state == "active" && session?.id == snapshot.id) {
                     val progress = learner
+                    if (voiceSession && conversationPace.observe(valid, passage, snapshot.languageID)) {
+                        command("instructions", conversationPace.instruction)
+                    }
                     val targetLanguage = LanguageRegistry.get(snapshot.languageID)?.name ?: language.name
                     val revisit = progress.words.filter { it.dueAt < nowSeconds() }.take(3).joinToString(", ") { it.lemma }
                     command("thinking", "Teaching context, not spoken text: challenge ${progress.challenge}/5 in $targetLanguage. Next goal: ${progress.nextGoal}. Revisit naturally: $revisit.")
