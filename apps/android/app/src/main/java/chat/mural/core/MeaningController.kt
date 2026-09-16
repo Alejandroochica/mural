@@ -30,6 +30,8 @@ data class MeaningRequest(
 
 data class MeaningResult(val text: String, val inputTokens: Int = 0, val outputTokens: Int = 0)
 
+class MeaningInputLimitException : Exception("This caption is too long to translate in one request.")
+
 class EmptyMeaningException : Exception("The translation came back empty.")
 
 /** Waits for a sentence or quiet transcript, then keeps one translation in flight. */

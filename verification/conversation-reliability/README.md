@@ -1,49 +1,26 @@
-# Conversation reliability review
+# Conversation and reliability review
 
-This change addresses issues #29, #35, #36, #37 and #38, plus the persona/accent instructions in #32. It is a draft for review. Live listening and device checks remain outstanding.
+This combines #41, #48, #49, #57, #61 and #62. The earlier fixes for #50, #53 and #54 are already on main. Issue #32 and PR #44 are deferred at the owner's request; the new persona/accent instructions have been removed. Existing regional guidance and the OpenAI `marin` voice remain.
 
-## Review scope and coordination
+## UI and conversation changes
 
-The review baseline is `codex/conversation-foundation`: current main plus the other task’s published #57 (`b9defbc`) and #61 (`698cf7d`). The local review compares against that baseline so its diff contains only this task’s work. William approved publishing the review branches and draft PR; merge and deployment are not authorized. Those two PRs still need their own approval. After they merge, retarget this draft to main and verify the resulting diff and checks before considering a merge.
-
-The other task owns #41/#48, #49, #57 and #61. Its already merged #56/#58/#59 are included from main. The 30-second cutoff and accent direction build on Boris’s #43 and #44; his contribution is credited in the implementation commit. No PR or issue was closed by this task.
-
-## Every new UI and UX change
-
-| Area | Before | New behavior |
+| Change | Before | Now |
 | --- | --- | --- |
-| Quiet voice sessions | Closed after about 120 seconds without transcript activity. | One gentle check-in after 15 seconds of silence; closure at 30 seconds. The check-in’s own audio and transcript cannot restart that clock. |
-| Countdown | The usual listening/speaking status remained visible until closure. | The existing status line shows “Ending in 5s · reply to continue”, counting down through the final five seconds. Android has a Spanish translation. This can wrap at large text sizes. |
-| Typing and delayed responses | Activity depended on transcripts. | Opening/editing a typed reply clears the warning. Active editing gets up to 60 seconds from the first edit; edits must remain recent. A pending typed response or delegated answer gets up to 45 seconds from when waiting starts. Sending a reply or asking for help restarts the quiet window. |
-| Speech arriving before captions | Audio levels did not protect against idle closure. | Recent microphone activity can extend the quiet deadline by up to 15 seconds while waiting for transcripts. Muted microphone activity does not count. Repeated noise cannot extend the deadline indefinitely. |
-| Assistant output | Late output could keep extending transcript activity. | Ordinary assistant speech postpones silence counting. Unanswered assistant output is capped at 60 seconds of extension; a check-in adds no extension. |
-| Conversation direction | General guidance to converse and teach. | After a completed answer, respond to its meaning and ask one relevant follow-up or offer a concrete choice. Follow topic changes and leave thinking time. Silence check-ins are initiated by the app. |
-| Early speaking pace | Delivery primarily followed the saved challenge and general prompt. | Start with short, unhurried speech. The first validated, successful independent spoken passage can enable a natural pace; two distinct higher-level successes can enable connected sentences. Help or a breakdown immediately restores short, slower replies. An assessment already in progress cannot undo Help. |
-| Regional persona | Regional guidance was strongest in the opening voice prompt. | Explicit warm, patient persona and consistent pronunciation in the base prompt, greeting, check-in, help, redirect, delegated answer, typed reply and sourced topic. All eight languages retain their existing regional guidance. |
-| Error advice | Several unrelated failures shared a generic explanation. | Distinct messages for API credit, temporary request limits, service unavailability, invalid requests, Android connection/timeout failures, helper concurrency, exhausted helper allowance and unresolved balance checks. Existing account/key recovery actions remain available. |
-| Error references | Mural references covered selected startup failures. | All server error responses carry a safe Mural reference. Direct OpenAI errors can display an “OpenAI reference” below the message. Provider response text is never shown. |
+| Quiet voice sessions | Could remain open for two minutes | One gentle check-in after 15 seconds; closure after 30 seconds, with bounded grace for speech, typing and pending answers |
+| Countdown | Normal status until closure | “Ending in 5s” above “Reply to continue,” centered beneath the orb in the existing secondary color. Stable spacing, tabular digits and scalable text; Android preserves room for Report |
+| Speaking pace | Limited initial delivery guidance | Short, unhurried opening replies; temporary delivery adapts to validated independent spoken answers. Help simplifies immediately. Saved proficiency is unaffected |
+| Conversation direction | Could leave the next step to the learner | One relevant follow-up or concrete choice; learner topic changes remain welcome |
+| Failed typed reply | Draft could disappear | Sheet stays open, draft and error remain, and a successful retry creates one transcript row. Send stays reachable with keyboard and large text |
+| End reason | Could be replaced by a usage notice | Inactivity and time-limit explanations remain visible |
+| Errors | Several unrelated failures shared advice | Distinct credit, rate, service, connection and hosted-helper advice, safe support references and existing account/key recovery actions |
+| Captions and vocabulary | Fragment boundaries could lose spaces or valid evidence | Shared Unicode-aware joining preserves punctuation, Mandarin boundaries and cross-fragment vocabulary evidence |
+| Meanings | Only the last 2,200 characters were sent | Complete caption is sent. A failed full translation clears an earlier partial meaning. Hosted captions above 24,576 UTF-8 bytes show a clear limit without a futile retry; the next reply resumes meanings |
+| iPhone network loss | A disconnected call could look active | Eight seconds to recover; sustained loss uses the existing restart error. Closing cancels recovery callbacks |
 
-Typing grace ends if editing stops for ten seconds. Microphone grace depends on recent audio-level samples and is bounded; it cannot guarantee protection for a long utterance whose transcript never arrives. Maximum session duration and hosted billing deadlines still take priority. A closure request is not confirmation that provider billing has stopped.
+No new navigation, panel or color scheme is introduced. The countdown and error copy change; typed-reply sheets gain scrolling and retained errors through #57. All screenshots use synthetic learning content.
 
-The pace profile lives only in the current conversation. It neither raises saved learning progress nor awards a proficiency level. Typed answers, visible-meaning-assisted answers, uncertain evidence, other-language vocabulary and stale assessments cannot raise it. The model receives delivery instructions; these are not a numeric audio-speed control.
+## Tests and release
 
-The only new visual element is the countdown text in the existing status location. Error text and reference lines also change. The retry sheet layout, preserved drafts, end-notice handling and iPhone reconnect grace come from the other task’s #57/#61, not this diff.
+See [validation.md](validation.md) for exact results and remaining limits. Two live iPhone calls confirmed captions, speaker output, successful closure and audio-session release. Deterministic tests cover countdown timing, typing/speech grace, network callback lifecycle, retries and learning evidence. These tests do not rate pronunciation or guarantee model pacing on every reply.
 
-## Voice preset limitation
-
-The current provider remains OpenAI `gpt-live-1` with `marin`. Kore and Aoede are Gemini presets and cannot be selected through this provider. The persona portion of #32 is implemented; its voice comparison remains open with the Gemini work in #30. No listening comparison or pronunciation-quality result is claimed.
-
-## Verification
-
-Final results and reproduction commands are recorded in [validation.md](validation.md). Screenshots use synthetic content in isolated test apps; they do not show a learner’s data or a live conversation.
-
-- [Android countdown, Spanish large text](android-countdown-large-es.png)
-- [Android API-credit error, Spanish large text](android-quota-large-es.png)
-- [Android typing during the quiet window](android-typing-large-es.png)
-
-Before merge consideration: review these UX changes; complete a short live conversation covering greeting, learner speech, Help, interruption, silence, mute, subtitles and confirmed closure; listen to target-language accent and pace; check speaker/headphone routing and cellular behavior. Simulator and fake-provider results cannot establish those outcomes.
-
-The Android countdown reserves space beside the existing report button and centers wrapped text. This small spacing change applies to the warning, preventing large text from sharing the report button’s area. At iPhone’s largest accessibility size, the existing page scrolls to reach captions and controls below the warning.
-
-- [iPhone countdown, largest accessibility text](ios-countdown-largest-text.png)
-- [iPhone API-credit error](ios-quota-error.png)
+Android preview 8 retains the direct-download configuration and package. Its [release notes](../../release/android/notes-v8.md) describe user outcomes. The Play submission and server deployment are separate.

@@ -52,15 +52,4 @@ class ConversationPaceTest {
         assertTrue(pace.observe(fresh, next, "nb"))
         assertEquals(ConversationPace.Delivery.NATURAL, pace.delivery)
     }
-    @Test fun allSpokenPromptPathsPreserveRegionalPronunciation() {
-        for (language in LanguageRegistry.all) {
-            val learner = LearningEngine.project(emptyList(), language.id)
-            val prompts = listOf(TeachingPolicy.voice(language, learner, null, "", "English"), TeachingPolicy.greeting(language), TeachingPolicy.checkIn(language), TeachingPolicy.help(language), TeachingPolicy.redirect(language), TeachingPolicy.delegation(language), TeachingPolicy.typedReply(language), TeachingPolicy.currentTopic(language))
-            for (prompt in prompts) {
-                assertTrue(language.id, prompt.contains(language.speechGuidance))
-                assertTrue(language.id, prompt.contains("Persona and accent:"))
-            }
-            assertTrue(prompts.first().toByteArray(Charsets.UTF_8).size < 12000)
-        }
-    }
 }

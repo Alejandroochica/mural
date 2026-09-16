@@ -94,7 +94,7 @@ import MuralCore
     var userPassage: Passage? { session?.passages.last(where: { $0.speaker == .user }) }
     var caption: String { assistantPassage?.text ?? language.greeting }
     var status: String {
-        if state == .active, let seconds = inactivitySeconds { return "Ending in \(seconds)s · reply to continue" }
+        if state == .active, let seconds = inactivitySeconds { return "Ending in \(seconds)s\nReply to continue" }
         return switch state {
         case .idle: "Ready when you are"
         case .connecting: "Getting comfortable…"

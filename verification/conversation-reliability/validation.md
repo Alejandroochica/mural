@@ -1,50 +1,37 @@
-# Validation record — September 16, 2026
+# Combined validation — September 16, 2026
 
-Review scope: `codex/conversation-reliability` against `codex/conversation-foundation`. The baseline includes the published #57 and #61; neither was merged to main by this task.
+The combined source includes #41/#48/#49/#57/#61, the main-branch #50/#53/#54 fixes, and #62 with #32 excluded.
 
 | Check | Result |
 | --- | --- |
-| API TypeScript check | Passed |
-| API full suite with PostgreSQL integration | 362 passed, 0 skipped |
-| Swift core suite | 93 passed |
-| Android unit suite | 334 passed, 0 skipped |
+| Server suite with isolated PostgreSQL | 362 passed; none skipped |
+| TypeScript check | Passed |
+| Swift core | 98 passed |
+| Android unit | 338 passed; none skipped |
 | Android lint and app/test builds | Passed |
-| Cross-platform prompt/constants/archive parity | Passed |
+| Android native UI suite | 71 passed; none skipped |
 | Repository Python checks | 53 passed |
-| Full iPhone UI suite | 25 passed |
-| Android final focused native UI suite | 8 passed, including retry and authentication recovery |
-| Android Spanish UI at 2× text | 4 passed; repeated after final integration |
+| Cross-platform parity and Android content export | Passed |
+| Live iPhone audio | Two calls passed: captions, speaker output, closure and audio release |
+| iPhone UI | Final rerun pending after correcting the status accessibility trait |
+| Release candidate packaging and update | Pending final artifact |
 
-The final iPhone build passed all four affected-flow UI tests after the Help-versus-assessment race guard. The final Android run passed eight English UI tests and four Spanish tests at 2× text, including the countdown/report-button geometry assertion.
+Server tests use an isolated UTF-8 PostgreSQL database and fake provider transports. They cover sanitized diagnostics, reference isolation, logging failures, provider rejection, closure and settlement alongside existing account, purchase and recovery tests. No production deployment was performed.
 
-## Coverage
+Core tests cover quiet-session boundaries, one check-in, bounded speech/typing/helper grace, temporary delivery adaptation, stale/duplicate/assisted evidence, Help during pending assessment, caption joining and learning evidence, complete translations, and safe error categories.
 
-Server tests cover concurrent reference isolation, safe SQLSTATE categories, omitted private bodies/headers/query strings, malformed requests, 404 references, provider rejection without retry, logger failure isolation, and closure requested versus confirmed settlement. Existing ledger, authentication, purchases, voice recovery and helper-budget tests ran against an isolated UTF-8 PostgreSQL database on port 55491. Fake provider HTTP and WebSocket servers were used; no real charges or accounts were created.
+The full Android UI run includes retained typed drafts and retry without duplicate transcript rows, authentication recovery, long multilingual captions, oversized hosted-caption guidance with no dispatch/retry, recovery on the next reply, countdown/report geometry, navigation and existing account flows. Offline HTTP fixtures are used.
 
-Both native cores cover exact 15/30-second thresholds; one check-in; check-in audio not extending the timer; actual answers restarting it; muted/noisy input; bounded assistant output, typing and helper waits; abandoned drafts; early pace adaptation; duplicate/stale/assisted/typed/other-language evidence; Help winning over an assessment in flight; and pronunciation guidance in all eight language modules. Error tests distinguish quota from rate limits and reject unsafe references and provider text.
-
-Native UI checks exercise the existing alerts, reference display, countdown text, actual quiet-session closure, preserved end explanation, typing clearing the warning, retained retry drafts, and existing account/key recovery. Screenshots were inspected at normal and accessibility text sizes. A geometry assertion checks that the Android countdown leaves room for the report control.
-
-The full iPhone suite ran before the final Help-versus-assessment race guard. The core suite and affected-flow UI rerun cover that final source change. Android’s final authentication-recovery follow-up from #57 is included.
+The iPhone's two live Spanish calls used the existing key and an in-memory learning store. The owner explicitly approved microphone audio being sent to OpenAI. Both returned captions and measurable output through the built-in speaker, retained the speaker preference, closed and released the audio session. The report contains no transcript, recorded audio or key. Bluetooth, cellular handoff and pronunciation quality were not measured. The simulator transport test drives real WebRTC delegate callbacks through disconnect, reconnect, close, teardown, stale callbacks and subsequent peers without making network calls.
 
 ## Reproduction
 
-From `services/api`, run `npm run check` and `TEST_DATABASE_URL=<isolated UTF-8 database ending in _test> npm test`. Use the source test runner: running emitted JavaScript directly omits the migration SQL fixtures.
+- `swift test --package-path apps/ios`
+- `python3 scripts/check_cross_platform.py`
+- `python3 scripts/export_android_content.py --check`
+- `python3 -m unittest discover -s scripts/tests`
+- In `services/api`: `npm run check` and `TEST_DATABASE_URL=<isolated UTF-8 test database> npm test`
+- In `apps/android`, with JDK 17 and the Android SDK: `./gradlew :app:testDebugUnitTest :app:lintDebug :app:connectedUiTestAndroidTest`
+- iPhone simulator: `xcodebuild ... ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test`
 
-From the repository root:
-
-```sh
-swift test --package-path apps/ios
-python3 scripts/check_cross_platform.py
-python3 -m unittest discover -s scripts/tests
-```
-
-Android uses JDK 17 and the installed Android SDK. From `apps/android`, run `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleUiTest :app:assembleUiTestAndroidTest`. UI tests run in `chat.mural.android.uitest`, separately from a learner’s app. Focused classes are `ConversationPolicyTest`, `StartupErrorTest` and `TypedReplySheetTest`; #57’s authentication regression is in `CaptionParityTest`.
-
-The iPhone run used Xcode 26.4.1, an isolated iPhone 17 Pro simulator, and `xcodebuild ... ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test`. The first invocation attempted an x86 simulator app with an ARM-only package output; selecting the native architecture fixed the build. Neither that invocation nor the earlier SQL-fixture setup failure is counted as a passing check.
-
-## Remaining validation
-
-No live provider voice call, physical microphone capture, pronunciation rating, speaker/headphone test or cellular conversation was performed by this task. A connected iPhone was detected but its installed app was not replaced. These checks remain necessary before recommending a merge of the changed audio behavior. Prompt assertions do not prove that a model will use the intended pace or accent consistently.
-
-Kore/Aoede comparison is pending Gemini provider support (#30). The current OpenAI voice remains `marin`. Server logging was tested locally; no production deployment or production-log verification was performed. Docker rotation configuration was reviewed, but a running Docker daemon was unavailable for an end-to-end rotation check.
+The initial combined iPhone run exposed a lost static-text accessibility trait in the revised countdown container. It was corrected before the final rerun; the failed run is not reported as passing. Android's first build exposed a duplicate style import, also fixed before the passing build and UI run.

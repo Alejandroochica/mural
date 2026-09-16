@@ -372,11 +372,18 @@ final class MuralUITests: XCTestCase {
         app.buttons["Done"].tap()
         XCTAssertEqual(app.staticTexts["target-caption"].label, "Hei!")
     }
+    func testNetworkRecoveryLifecycleThroughRealTransport() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--preview", "--verify-network-recovery"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Network recovery lifecycle passed"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Network recovery lifecycle failed"].exists)
+    }
     func testInactivityCountdownRemainsReadableAtLargestTextSize() {
         let app = XCUIApplication()
         app.launchArguments = ["--preview", "--preview-inactivity", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
-        let warning = app.staticTexts["Ending in 5s · reply to continue"]
+        let warning = app.staticTexts["conversation-status"]
         XCTAssertTrue(warning.waitForExistence(timeout: 10))
         XCTAssertTrue(warning.isHittable)
         let screen = XCTAttachment(screenshot: app.screenshot())

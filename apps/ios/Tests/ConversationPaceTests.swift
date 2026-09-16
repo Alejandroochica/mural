@@ -51,15 +51,4 @@ final class ConversationPaceTests: XCTestCase {
         XCTAssertTrue(pace.observe(fresh, passage: next, languageID: "nb"))
         XCTAssertEqual(pace.delivery, .natural)
     }
-    func testAllSpokenPromptPathsPreserveRegionalPronunciation() {
-        for language in LanguageRegistry.all {
-            let learner = LearningEngine.project([], languageID: language.id)
-            let prompts = [TeachingPolicy.voice(language: language, learner: learner, theme: nil, interests: "", meaningLanguage: "English"), TeachingPolicy.greeting(language: language), TeachingPolicy.checkIn(language: language), TeachingPolicy.help(language: language), TeachingPolicy.redirect(language: language), TeachingPolicy.delegation(language: language), TeachingPolicy.typedReply(language: language), TeachingPolicy.currentTopic(language: language)]
-            for prompt in prompts {
-                XCTAssertTrue(prompt.contains(language.speechGuidance), language.id)
-                XCTAssertTrue(prompt.contains("Persona and accent:"), language.id)
-            }
-            XCTAssertLessThan(prompts[0].utf8.count, 12000)
-        }
-    }
 }

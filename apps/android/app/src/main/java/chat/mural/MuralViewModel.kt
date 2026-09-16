@@ -113,6 +113,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     var meaning by mutableStateOf(""); private set
     var translating by mutableStateOf(false); private set
     var meaningFailed by mutableStateOf(false); private set
+    var meaningLimitReached by mutableStateOf(false); private set
     var working by mutableStateOf(false); private set
     var isMuted by mutableStateOf(false); private set
     var inputLevel by mutableStateOf(0.0); private set
@@ -202,6 +203,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         retryDelay = HostedHelperRetry::automaticDelay) { request ->
         if (archive.preferences.aiConsentVersion != 1) throw IllegalStateException("AI processing consent is required.")
         val module = LanguageRegistry.get(request.learningLanguageID) ?: throw IllegalStateException("Unsupported language.")
+        if (request.sessionID in hostedSessionIDs && request.translationInput.toByteArray(Charsets.UTF_8).size > 24_576) throw MeaningInputLimitException()
         val result = teaching(request.sessionID, HelperPurpose.MEANING, request.cacheKey,
             TeachingPolicy.translation(module, request.meaningLanguage), request.translationInput)
         MeaningResult(result.text, result.usage.input, result.usage.output)
@@ -278,7 +280,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 if (output > 0.03) activity.assistantActive(activityNow())
             }
         }
-        meanings.onChange = { meaning = meanings.text; translating = meanings.isLoading; meaningFailed = meanings.error != null }
+        meanings.onChange = { meaning = meanings.text; translating = meanings.isLoading; meaningFailed = meanings.error != null; meaningLimitReached = meanings.error is MeaningInputLimitException }
         meanings.onResult = { request, result ->
             if (session?.id == request.sessionID) updateSession {
                 it.translations[request.cacheKey] = result.text

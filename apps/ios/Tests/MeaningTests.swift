@@ -126,6 +126,25 @@ import XCTest
         XCTAssertEqual(controller.text, "Hi!")
     }
 
+    func testFailureForAnExtendedCaptionClearsItsEarlierPartialMeaning() async {
+        let translator = Translator()
+        let controller = MeaningController(delay: .zero, translate: translator.translate)
+        controller.update(request("Hei"))
+        await waitUntil { translator.requests.count == 1 }
+        translator.succeed("Hi")
+        await waitUntil { !controller.isLoading }
+        controller.update(request("Hei, jeg liker kaffe.", revision: 1))
+        await waitUntil { translator.requests.count == 2 }
+        translator.fail()
+        await waitUntil { controller.error != nil }
+        XCTAssertEqual(controller.text, "")
+        controller.retry()
+        await waitUntil { translator.requests.count == 3 }
+        translator.succeed("Hi, I like coffee.")
+        await waitUntil { !controller.isLoading }
+        XCTAssertEqual(controller.text, "Hi, I like coffee.")
+    }
+
     func testChangingMeaningLanguageClearsOldTextAndUsesSeparateCacheKeys() async {
         let translator = Translator()
         let controller = MeaningController(delay: .zero, translate: translator.translate)

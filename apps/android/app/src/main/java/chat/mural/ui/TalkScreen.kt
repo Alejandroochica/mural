@@ -1,6 +1,10 @@
 package chat.mural.ui
 
 import android.os.Build
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -134,8 +138,15 @@ fun TalkScreen(
             active = vm.state != "closing",
             modifier = Modifier.size(orbSize),
         )
-        Box(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp), contentAlignment = Alignment.Center) {
-            Text(statusText(vm.state, vm.isMuted, vm.isVoiceSession, vm.inactivitySeconds), style = MaterialTheme.typography.bodySmall,
+        Box(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp).heightIn(min = 40.dp), contentAlignment = Alignment.Center) {
+            val status = statusText(vm.state, vm.isMuted, vm.isVoiceSession, vm.inactivitySeconds)
+            val statusCaption = buildAnnotatedString {
+                if (vm.inactivitySeconds != null) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum")) { append(status.substringBefore('\n')) }
+                    append("\n"); append(status.substringAfter('\n'))
+                } else append(status)
+            }
+            Text(statusCaption, style = MaterialTheme.typography.bodySmall,
                 color = MuralColors.Secondary, textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = if (vm.inactivitySeconds != null && assistantPassage != null) 40.dp else 0.dp)
                     .testTag("conversation-status"))
@@ -192,8 +203,8 @@ fun TalkScreen(
                 modifier = Modifier.testTag("meaning-caption"),
             )
             if (vm.meaningFailed) {
-                Text(stringResource(R.string.talk_meaning_failed), color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall)
-                MuralTextButton(onClick = vm::retryMeaning) { Text(stringResource(R.string.talk_retry_meaning_button)) }
+                Text(stringResource(if (vm.meaningLimitReached) R.string.talk_meaning_too_long else R.string.talk_meaning_failed), color = MuralColors.Secondary, style = MaterialTheme.typography.bodySmall)
+                if (!vm.meaningLimitReached) MuralTextButton(onClick = vm::retryMeaning) { Text(stringResource(R.string.talk_retry_meaning_button)) }
             }
             }
         }

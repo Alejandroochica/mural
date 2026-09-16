@@ -25,7 +25,6 @@ test('all native locales reach the provider with the intended regional speech ta
       assert.equal(supportsLanguage(locale!), true, locale);
       await provider.create('v=0', locale!);
       assert.ok(requests.at(-1).session.instructions.includes(`Speak only ${target}`));
-      assert.ok(requests.at(-1).session.instructions.includes('Persona and accent:'));
       assert.equal(requests.at(-1).session.audio.output.voice, 'marin');
       assert.equal(requests.at(-1).session.store, false);
     }

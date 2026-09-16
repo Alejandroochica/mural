@@ -53,6 +53,12 @@ struct RootView: View {
         }
         #if DEBUG
         .task {
+            #if targetEnvironment(simulator)
+            if ProcessInfo.processInfo.arguments.contains("--verify-network-recovery") {
+                coordinator.notice = await LiveTransport.verifyRecoveryLifecycle() ? "Network recovery lifecycle passed" : "Network recovery lifecycle failed"
+                return
+            }
+            #endif
             if AudioVerification.requested { await AudioVerification.run(coordinator) }
             else if ProcessInfo.processInfo.arguments.contains("--ended-conversation") { coordinator.prepareEndedPreview() }
         }
@@ -87,9 +93,17 @@ struct TalkView: View {
                     Spacer(minLength: 8)
                     MuralOrb(energy: max(coordinator.outputLevel, coordinator.inputLevel * 0.45), listening: coordinator.state == .active && !coordinator.isMuted, active: coordinator.state != .closing)
                         .frame(width: typeSize.isAccessibilitySize ? 170 : 220, height: typeSize.isAccessibilitySize ? 180 : 222).padding(.vertical, 8)
-                    Text(coordinator.status).font(.system(.caption, design: .rounded)).foregroundStyle(MuralColor.secondary)
-                        .contentTransition(.numericText()).padding(.top, 6).padding(.bottom, 16).accessibilityAddTraits(.updatesFrequently)
-                        .accessibilityIdentifier("conversation-status")
+                    VStack(spacing: 2) {
+                        if coordinator.state == .active, let seconds = coordinator.inactivitySeconds {
+                            Text("Ending in \(seconds)s").fontWeight(.medium).monospacedDigit()
+                            Text("Reply to continue").font(.system(.caption2, design: .rounded))
+                        } else { Text(coordinator.status) }
+                    }
+                    .font(.system(.caption, design: .rounded)).foregroundStyle(MuralColor.secondary)
+                    .multilineTextAlignment(.center).frame(minHeight: 36)
+                    .padding(.top, 6).padding(.bottom, 16)
+                    .accessibilityElement(children: .ignore).accessibilityLabel(coordinator.status)
+                    .accessibilityAddTraits([.isStaticText, .updatesFrequently]).accessibilityIdentifier("conversation-status")
                     captionArea
                     Spacer(minLength: 12)
                     controls
