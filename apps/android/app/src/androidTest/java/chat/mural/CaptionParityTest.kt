@@ -205,6 +205,23 @@ class CaptionParityTest {
         }
     }
 
+    @Test fun endingKeepsOnlyTheSpecificEndReasonNotice() {
+        for (reason in listOf("Inactivity", "Time limit", "Ended by you")) {
+            show("es", "Hola.", "Hello.")
+            compose.runOnIdle {
+                state("notice", "Stale help notice")
+                vm.end(reason)
+                val expected = when (reason) {
+                    "Inactivity" -> compose.activity.getString(R.string.notice_ended_inactivity)
+                    "Time limit" -> compose.activity.getString(R.string.notice_time_limit_reached)
+                    else -> null
+                }
+                assertEquals("ended", vm.state)
+                assertEquals(expected, vm.notice)
+            }
+        }
+    }
+
     @Test fun typedReplyFailureRetriesWithoutDuplicateTranscriptRows() {
         show("es", "Hola.", "Hello.")
         responseCode = 503
