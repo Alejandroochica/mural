@@ -13,8 +13,12 @@ The combined source includes #41/#48/#49/#57/#61, the main-branch #50/#53/#54 fi
 | Repository Python checks | 53 passed |
 | Cross-platform parity and Android content export | Passed |
 | Live iPhone audio | Two calls passed: captions, speaker output, closure and audio release |
-| iPhone UI | Final rerun pending after correcting the status accessibility trait |
-| Release candidate packaging and update | Pending final artifact |
+| iPhone UI | 26 passed in the final full rerun |
+| 16 KB Android native UI and WebRTC | 71 passed on API 35, page size 16,384 |
+| Android release lint and bundle validation | Passed, including native layout, manifest, assets and credential scan |
+| Signed APK | v2/v3 signature and 16 KB ZIP alignment passed; same certificate as v7 |
+| In-place v7 → v8 update | German practice, English meanings and completed onboarding preserved |
+| Final large-text Android checks | Four Spanish tests passed at 2× text |
 
 Server tests use an isolated UTF-8 PostgreSQL database and fake provider transports. They cover sanitized diagnostics, reference isolation, logging failures, provider rejection, closure and settlement alongside existing account, purchase and recovery tests. No production deployment was performed.
 
@@ -35,3 +39,13 @@ The iPhone's two live Spanish calls used the existing key and an in-memory learn
 - iPhone simulator: `xcodebuild ... ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test`
 
 The initial combined iPhone run exposed a lost static-text accessibility trait in the revised countdown container. It was corrected before the final rerun; the failed run is not reported as passing. Android's first build exposed a duplicate style import, also fixed before the passing build and UI run.
+
+## Preview 8 artifact
+
+The exact signed APK is `Mural-Android-direct-v8.apk`, 59,713,683 bytes, SHA-256 `c644419d09e2541f427ddc26649bda368181e1faf9935ce947ce4b273b4e2bdc`. Its certificate SHA-256 is `16cc94553e43e0d9dfbc0ac72f162eb163e7d26d330bcae455e212c0a790c022`, matching v7. Package `chat.mural.android`, version code 8, version name 0.1, minimum SDK 26, target SDK 36; release manifest has no debuggable or test-only flag. Public configuration retains `https://api.mural.chat`, the existing Google client ID, Stripe channel and live purchase environment.
+
+The APK was installed directly over published v7 on an isolated 16 KB emulator without uninstalling or clearing data. This installation contained selected language settings, not an existing learner's history or sign-in. Native repository/account tests cover persistence separately. The full native suite on the 16 KB runtime also creates a real WebRTC audio/data offer without microphone or internet.
+
+Purchases, Play-signed login, Bluetooth and cellular handoff were not exercised in this release run. Their code/configuration is unchanged. The release remains a direct-download preview; no Play submission, paid transaction or server deployment is part of this task.
+
+A release-version assertion initially still selected v7; it was updated to validate current v8 against historical v7/v4, and all 53 repository checks passed again. Integration with newly merged main changed no product-code files after the successful native runs.

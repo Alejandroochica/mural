@@ -24,3 +24,12 @@ No new navigation, panel or color scheme is introduced. The countdown and error 
 See [validation.md](validation.md) for exact results and remaining limits. Two live iPhone calls confirmed captions, speaker output, successful closure and audio-session release. Deterministic tests cover countdown timing, typing/speech grace, network callback lifecycle, retries and learning evidence. These tests do not rate pronunciation or guarantee model pacing on every reply.
 
 Android preview 8 retains the direct-download configuration and package. Its [release notes](../../release/android/notes-v8.md) describe user outcomes. The Play submission and server deployment are separate.
+
+## Countdown review captures
+
+- [Android, normal text](android-countdown.png)
+- [Android, Spanish at 2× text](android-countdown-large-es.png)
+- [iPhone, normal text](ios-countdown.png)
+- [iPhone, largest accessibility text](ios-countdown-largest-text.png)
+
+The large-text layouts wrap and scroll rather than shrink the user's chosen text size. Tests confirm that the countdown stays readable, typing clears it, and the Android report action remains separate.
