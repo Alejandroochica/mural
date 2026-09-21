@@ -1,0 +1,33 @@
+name: Build IPA
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build App
+        run: |
+          cd apps/ios
+          xcodebuild build \
+            -project Mural.xcodeproj \
+            -scheme Mural \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR=build
+
+      - name: Package IPA
+        run: |
+          cd apps/ios/build
+          mkdir -p Payload
+          cp -r Mural.app Payload/
+          zip -r Mural.ipa Payload
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mural-IPA
+          path: apps/ios/build/Mural.ipa
