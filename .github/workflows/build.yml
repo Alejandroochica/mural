@@ -8,26 +8,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build App
+      - name: Build and Package App
         run: |
           cd apps/ios
-          xcodebuild build \
+          xcodebuild clean build \
             -project Mural.xcodeproj \
             -scheme Mural \
             -destination "generic/platform=iOS" \
             -configuration Release \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             CONFIGURATION_BUILD_DIR=build
-
-      - name: Package IPA
-        run: |
-          cd apps/ios/build
+          
           mkdir -p Payload
-          cp -r Mural.app Payload/
+          cp -r build/Mural.app Payload/
           zip -r Mural.ipa Payload
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Mural-IPA
-          path: apps/ios/build/Mural.ipa
+          path: apps/ios/Mural.ipa
